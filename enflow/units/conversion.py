@@ -19,3 +19,6 @@ def second_to_lj(t):
     
 def femtosecond_to_lj(t):
     return second_to_lj(t*1e-15)
+    
+def picosecond_to_lj(t):
+    return second_to_lj(t*1e-12)

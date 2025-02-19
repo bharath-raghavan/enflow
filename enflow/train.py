@@ -1,11 +1,11 @@
 import os
 import numpy as np
-from enflow.nn.model import ENFlow
+from enflow.model import ENFlow
 from enflow.data.qm9 import QM9
 from enflow.data import transforms
 import torch
 from torch_geometric.loader import DataLoader
-from enflow.units.conversion import ang_to_lj, kelvin_to_lj, picosecond_to_lj
+from enflow.units.conversion import ang_to_lj, kelvin_to_lj, femtosecond_to_lj
 import torch_geometric.transforms as T
 
 temp = 120
@@ -18,11 +18,10 @@ start_epoch = 0
 checkpoint_path = "model.cpt"
 num_epochs = 60
 
-model = ENFlow(node_nf=5, n_iter=10, dt=picosecond_to_lj(100), dh=1, r_cut=ang_to_lj(3), temp=kelvin_to_lj(temp), softening=0.1)
-model.to(torch.double)
+model = ENFlow(node_nf=5, n_iter=4, dt=0.1, dh=0.1, r_cut=ang_to_lj(3), temp=kelvin_to_lj(temp))
 
 lr = 1e-3
-optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+optimizer = torch.optim.SGD(model.parameters(), lr=lr)
 scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=0.5, total_iters=60)
 
 # load from checkpoint of it exists
