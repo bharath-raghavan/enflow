@@ -31,11 +31,11 @@ class BaseDataset(InMemoryDataset):
 
             conf = mol.GetConformer()
             pos = conf.GetPositions()
-            pos = torch.tensor(pos, dtype=torch.float)
+            pos = torch.tensor(pos, dtype=torch.float64)
             
             z = [atom.GetSymbol() for atom in mol.GetAtoms()]
             type_idx = [atom_types[i] for i in z]
-            h = one_hot(torch.tensor(type_idx), num_classes=len(atom_types))
+            h = one_hot(torch.tensor(type_idx), num_classes=len(atom_types), dtype=torch.float64)
 
             name = mol.GetProp('_Name')
             smiles = Chem.MolToSmiles(mol, isomericSmiles=True)
