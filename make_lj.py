@@ -1,9 +1,9 @@
-from enflow.model import ENFlow
+from enflow.nn.model import ENFlow
 from enflow.data.qm9 import QM9
 from enflow.data import transforms
 import torch
 from torch_geometric.loader import DataLoader
-from enflow.units.conversion import ang_to_lj, kelvin_to_lj, femtosecond_to_lj
+from enflow.units.conversion import ang_to_lj, kelvin_to_lj, picosecond_to_lj
 import torch_geometric.transforms as T
 from enflow.units.constants import sigma
 
@@ -21,15 +21,16 @@ loader = DataLoader(dataset, batch_size=1, shuffle=False)
 
 checkpoint_path = "model.cpt"
 
-model = ENFlow(node_nf=5, n_iter=4, dt=femtosecond_to_lj(2), dh=femtosecond_to_lj(2), r_cut=ang_to_lj(3), temp=kelvin_to_lj(temp))
+model = ENFlow(node_nf=dataset.h.shape[1], n_iter=10, dt=picosecond_to_lj(100), dh=1, r_cut=ang_to_lj(3), temp=kelvin_to_lj(temp))
+model.to(torch.double)
 
 checkpoint = torch.load(checkpoint_path, weights_only=False)
 model.load_state_dict(checkpoint['model_state_dict'])
 
 for data in loader: 
-    write_xyz(data, 'data.xyz')
     out, _ = model(data)
     break
-    write_xyz(out, 'lj.xyz')
+
+write_xyz(out, 'lj.xyz')
 
  
