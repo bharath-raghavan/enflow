@@ -1,5 +1,4 @@
 import torch
-from torch_geometric.transforms import BaseTransform
 
 from ..units.conversion import femtosecond_to_lj, m_to_lj
 from ..units.conversion import ang_to_lj, amu_to_lj, kelvin_to_lj
@@ -9,18 +8,27 @@ from rdkit import Chem
 from scipy.special import erf
 from scipy.interpolate import interp1d as interp
 
-class ConvertPositions(BaseTransform):
+class Compose:
+    def __init__(self, transforms):
+        self.transforms = transforms
+
+    def __call__(self, data):
+        for t in self.transforms:
+            data = t(data)
+        return data
+
+class ConvertPositionsFrom:
     def __init__(self, input_unit):
         if input_unit == 'ang':
             self.factor = 1e-10
         elif input_unit == 'nm':
             self.factor = 1e-9
 
-    def forward(self, data):
+    def __call__(self, data):
         data.pos = m_to_lj(data.pos*self.factor)
         return data
         
-class RandomizeVelocity(BaseTransform):
+class RandomizeVelocity:
     def __init__(self, temp):
         self.kBT = kelvin_to_lj(temp)
         self.pse = Chem.GetPeriodicTable()
@@ -52,6 +60,8 @@ class RandomizeVelocity(BaseTransform):
     
         return np.stack([vx, vy, vz], axis=1, dtype=np.float64)
 
-    def forward(self, data):        
+    def __call__(self, data):
         data.vel = torch.from_numpy(self.generate_velocities(data.N))
         return data
+        
+

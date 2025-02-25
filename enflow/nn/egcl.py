@@ -21,11 +21,7 @@ def unsorted_segment_mean(data, segment_ids, num_segments):
     
 class EGCL(nn.Module):
     """Graph Neural Net with global state and fixed number of nodes per graph.
-    Args:
-          hidden_dim: Number of hidden units.
-          num_nodes: Maximum number of nodes (for self-attentive pooling).
-          global_agg: Global aggregation function ('attn' or 'sum').
-          temp: Softmax temperature.
+    Adapted from X
     """
 
 
@@ -93,7 +89,7 @@ class EGCL(nn.Module):
     def force_model(self, coord, edge_index, coord_diff, edge_feat):
         row, col = edge_index
         trans = coord_diff * self.coord_nn(edge_feat)
-        trans = torch.clamp(trans, min=-100, max=100) #This is never activated but just in case it case it explosed it may save the train
+        trans = torch.clamp(trans, min=-100, max=100) #This is never activated but just in case it explosed it may save the train
         agg = unsorted_segment_mean(trans, row, num_segments=coord.size(0))
         return agg*self.coords_weight
 
