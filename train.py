@@ -25,7 +25,7 @@ print(f"Device used is {device}")
 node_nf=dataset.node_nf
 hidden_nf = 128
 n_iter = 10
-dt = femtosecond_to_lj(2)
+dt = picosecond_to_lj(10)
 kBT = kelvin_to_lj(temp)
 r_cut = ang_to_lj(3)
 softening = 0.1
