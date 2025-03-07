@@ -2,7 +2,7 @@ import math
 import numpy as np
 import torch
 from .base import BaseDataset, Data
-from ..units.conversion import kelvin_to_lj, femtosecond_to_lj
+from ..utils.conversion import kelvin_to_lj, femtosecond_to_lj
 
 class LJMDEngine:
     def __init__(self, softening, target_kBT, dt, nu, box):
@@ -108,6 +108,7 @@ class LJDataset(BaseDataset):
             log_txt += '\n'.join(["%.2f" % number for number in kBT])
             log_txt += '\n'
             self.append(
+                z=['Ar']*N,
                 h=torch.rand(N, node_nf, dtype=torch.float64),
                 g=torch.rand(N, node_nf, dtype=torch.float64),
                 pos=pos,

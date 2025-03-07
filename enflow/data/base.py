@@ -1,6 +1,7 @@
 import os
 from abc import ABC, abstractmethod
 import torch
+from enflow.utils.helpers import get_box
 
 class Data:
     def __init__(self, z=None, h=None, g=None, pos=None, vel=None, N=None, label=None, device='cpu'):
@@ -12,6 +13,16 @@ class Data:
         self.N = N
         self.label = label
         self.device = device
+    
+    def clone(self):
+        return Data(z=self.z,\
+            h=self.h.detach().clone(),\
+            g=self.g.detach().clone(),
+            pos=self.pos.detach().clone(),\
+            vel=self.vel.detach().clone(),\
+            N=self.N,\
+            label=self.label,
+            device=self.device)
     
     def get_mol(self, i):
         if self.N.ndim == 0:
@@ -70,7 +81,19 @@ class Data:
                 label=self.label,
                 device=self.device
             )
+    
+    def pbc(self, box, reverse=False):
+        def get_push(coord):
+            box_len = box[coord]
+            box_edge = box[coord]*0.5
+            pushing = - ( (self.pos[:,coord] >= box_edge)*box_len ) + ( (self.pos[:,coord] < -box_edge)*box_len )
+            return pushing
             
+        if reverse:
+            self.pos = self.pos - torch.stack((get_push(0), get_push(1), get_push(2)), dim=1)
+        else:
+            self.pos = self.pos + torch.stack((get_push(0), get_push(1), get_push(2)), dim=1)
+    
     def get_edges(self, r_cut):
         # get nieghbour list
         r_sq = r_cut*r_cut
@@ -158,10 +181,11 @@ class BaseDataset(torch.utils.data.Dataset, ABC):
     
     @property  
     def node_nf(self):
-        return self.data_list[0].h.shape[1]
-    
-    def append(self, h, g, pos, vel, N, label):
+        return self.data_list[0].h.shape[1]   
+        
+    def append(self, z, h, g, pos, vel, N, label):
         data = Data(
+            z=z,
             h=h,
             g=torch.zeros_like(h),
             pos=pos,
@@ -174,7 +198,7 @@ class BaseDataset(torch.utils.data.Dataset, ABC):
             self.data_list.append(self.transform(data))
         else:
             self.data_list.append(data)
-            
+        
     @abstractmethod
     def process(self, **input_params):
         pass

@@ -1,7 +1,7 @@
 import torch
 
-from ..units.conversion import femtosecond_to_lj, m_to_lj
-from ..units.conversion import ang_to_lj, amu_to_lj, kelvin_to_lj
+from ..utils.conversion import m_to_lj, kelvin_to_lj
+from ..utils.helpers import get_box
 
 import numpy as np
 from rdkit import Chem
@@ -28,6 +28,15 @@ class ConvertPositionsFrom:
         data.pos = m_to_lj(data.pos*self.factor)
         return data
         
+class Center:
+    def __init__(self):
+        pass
+
+    def __call__(self, data):
+        pos = data.pos
+        data.pos = pos - pos.mean(dim=0, keepdim=True)
+        return data
+
 class RandomizeVelocity:
     def __init__(self, temp):
         self.kBT = kelvin_to_lj(temp)

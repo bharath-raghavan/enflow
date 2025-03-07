@@ -3,9 +3,10 @@ from enflow.data import transforms
 import torch
 from enflow.data.sdf import SDFDataset
 from enflow.data.base import DataLoader
-from enflow.units.conversion import ang_to_lj, kelvin_to_lj, picosecond_to_lj
+from enflow.utils.conversion import ang_to_lj, kelvin_to_lj, picosecond_to_lj, femtosecond_to_lj
 import torch_geometric.transforms as T
-from enflow.units.constants import sigma
+from enflow.utils.constants import sigma
+from enflow.utils.helpers import get_box
 import numpy as np
 
 def write_xyz(out, file):
@@ -17,28 +18,26 @@ def write_xyz(out, file):
             
 temp = 300
 
-dataset = SDFDataset("data/qm9/raw.sdf", "data/qm9/processed.pt", transform=transforms.Compose([transforms.ConvertPositionsFrom('ang'), transforms.RandomizeVelocity(temp)]))
+dataset = SDFDataset(raw_file="data/qm9/raw.sdf", processed_file="data/qm9/processed.pt", transform=transforms.Compose([transforms.ConvertPositionsFrom('ang'), transforms.Center(), transforms.RandomizeVelocity(temp)]))
 loader = DataLoader(dataset, batch_size=10, shuffle=True)
 
 checkpoint_path = "model.cpt"
 
-model = ENFlow(node_nf=dataset.node_nf, hidden_nf=128, n_iter=10, dt=picosecond_to_lj(100), r_cut=ang_to_lj(3), kBT=kelvin_to_lj(temp))
+model = ENFlow(node_nf=dataset.node_nf, hidden_nf=128, n_iter=10, dt=picosecond_to_lj(10), r_cut=ang_to_lj(3), kBT=kelvin_to_lj(temp), box=get_box(dataset))
 model.to(torch.double)
 
 #checkpoint = torch.load(checkpoint_path, weights_only=False)
 #model.load_state_dict(checkpoint['model_state_dict'])
 
-for i, data in enumerate(loader): 
-    print(i)
-    print(data.pos)
-    out, _ = model(data)
-    print(out.pos)
+for i, data in enumerate(loader):
+    out, _ = model(data.clone())
     rmsd = np.sqrt(((data.pos.detach().numpy() - out.pos.detach().numpy())**2).sum(-1).mean())
+    data_ = model.reverse(out.clone())
+    check = torch.allclose(data_.pos, data.pos, atol=1e-8)
     
-    data_ = model.reverse(out)
-    print(torch.allclose(data_.pos, data.pos, atol=1e-8))
+    print(check)
+    if not check: break
     
-    if i > 0: break
         
 print("Done")
  

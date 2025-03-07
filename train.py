@@ -1,16 +1,16 @@
 import os
 import numpy as np
 from enflow.nn.model import ENFlow
-from enflow.data.qm9 import QM9
 from enflow.data.sdf import SDFDataset
 from enflow.data.base import DataLoader
 from enflow.data import transforms
 import torch
-from enflow.units.conversion import ang_to_lj, kelvin_to_lj, picosecond_to_lj
+from enflow.utils.conversion import ang_to_lj, kelvin_to_lj, picosecond_to_lj, femtosecond_to_lj
+from enflow.utils.helpers import get_box
 
 temp = 300
 
-dataset = SDFDataset(raw_file="data/qm9/raw.sdf", processed_file="data/qm9/processed.pt", transform=transforms.Compose([transforms.ConvertPositionsFrom('ang'), transforms.RandomizeVelocity(temp)]))
+dataset = SDFDataset(raw_file="data/qm9/raw.sdf", processed_file="data/qm9/processed.pt", transform=transforms.Compose([transforms.ConvertPositionsFrom('ang'), transforms.Center(), transforms.RandomizeVelocity(temp)]))
 train_loader = DataLoader(dataset, batch_size=5000, shuffle=False)
 print("Loaded dataset")
 
@@ -25,13 +25,14 @@ print(f"Device used is {device}")
 node_nf=dataset.node_nf
 hidden_nf = 128
 n_iter = 10
-dt = picosecond_to_lj(10)
+dt = femtosecond_to_lj(2)
 kBT = kelvin_to_lj(temp)
 r_cut = ang_to_lj(3)
 softening = 0.1
+box = get_box(dataset) + 1 # padding
 
-print(f"Model params: hidden_nf={node_nf} hidden_nf={hidden_nf} n_iter={n_iter} dt={dt} r_cut={r_cut} kBT={kBT} softening={softening}", flush=True)
-model = ENFlow(node_nf=node_nf, hidden_nf=hidden_nf, n_iter=n_iter, dt=dt, r_cut=r_cut, kBT=kBT, softening=softening, device=device)    
+print(f"Model params: hidden_nf={node_nf} hidden_nf={hidden_nf} n_iter={n_iter} dt={dt} r_cut={r_cut} kBT={kBT} softening={softening} box={box}", flush=True)
+model = ENFlow(node_nf=node_nf, hidden_nf=hidden_nf, n_iter=n_iter, dt=dt, r_cut=r_cut, kBT=kBT, softening=softening, device=device, box=box)    
 model.to(torch.double)
 
 lr = 1e-3
@@ -54,7 +55,7 @@ for epoch in range(start_epoch, num_epochs):
     
     print('Batch/Total \tTraining Loss', flush=True)
     for i, data in enumerate(train_loader):
-        out, ldj = model(data.to(device))
+        out, ldj = model(data.to(device).clone())
         loss = model.nll(out, ldj)
         optimizer.zero_grad()
         loss.backward()
