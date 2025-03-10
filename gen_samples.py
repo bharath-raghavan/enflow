@@ -32,8 +32,8 @@ checkpoint = torch.load(checkpoint_path, weights_only=False)
 
 node_nf=dataset.node_nf
 hidden_nf = 128
-n_iter = 5
-dt = femtosecond_to_lj(2)
+n_iter = 10
+dt = picosecond_to_lj(1)
 r_cut = ang_to_lj(3)
 box = torch.tensor([box_len, box_len, box_len], dtype=torch.float64)
 

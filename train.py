@@ -1,6 +1,7 @@
 import os
 import numpy as np
-from enflow.nn.model import ENFlow
+from enflow.flow.dynamics import LeapFrogIntegrator
+from enflow.nn.egcl import EGCL
 from enflow.data.sdf import SDFDataset
 from enflow.data.base import DataLoader
 from enflow.data import transforms
@@ -16,7 +17,7 @@ print("Loaded dataset")
 
 start_epoch = 0
 checkpoint_path = "model.cpt"
-num_epochs = 60
+num_epochs = 500
 checkpoint = None
 
 device = 'cpu'#torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -25,14 +26,14 @@ print(f"Device used is {device}")
 node_nf=dataset.node_nf
 hidden_nf = 128
 n_iter = 10
-dt = picosecond_to_lj(10)
+dt = femtosecond_to_lj(2)
 kBT = kelvin_to_lj(temp)
 r_cut = ang_to_lj(3)
 softening = 0.1
-box = get_box(dataset) + 1 # padding
+box = get_box(dataset) + 10 # padding
 
 print(f"Model params: hidden_nf={node_nf} hidden_nf={hidden_nf} n_iter={n_iter} dt={dt} r_cut={r_cut} kBT={kBT} softening={softening} box={box}", flush=True)
-model = ENFlow(node_nf=node_nf, hidden_nf=hidden_nf, n_iter=n_iter, dt=dt, r_cut=r_cut, kBT=kBT, softening=softening, device=device, box=box)    
+model = LeapFrogIntegrator(network=EGCL(node_nf, node_nf, hidden_nf), n_iter=n_iter, dt=dt, r_cut=r_cut, kBT=kBT, softening=softening, device=device, box=box)    
 model.to(torch.double)
 
 lr = 1e-3
@@ -60,9 +61,9 @@ for epoch in range(start_epoch, num_epochs):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        
+
         losses.append(loss.item())
-        
+
         if not i % 10:
             mean = np.mean(losses)
             print('%.5i/%.5i \t    %.2f' % (i, len(train_loader), mean), flush=True)

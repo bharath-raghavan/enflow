@@ -1,4 +1,4 @@
-from enflow.flow.dynamics import VelocityVerletIntegrator, LeapFrogIntegrator
+from enflow.flow.dynamics import LeapFrogIntegrator
 from enflow.nn.egcl import EGCL
 from enflow.data import transforms
 import torch
@@ -22,29 +22,19 @@ temp = 300
 dataset = SDFDataset(raw_file="data/qm9/raw.sdf", processed_file="data/qm9/processed.pt", transform=transforms.Compose([transforms.ConvertPositionsFrom('ang'), transforms.Center(), transforms.RandomizeVelocity(temp)]))
 loader = DataLoader(dataset, batch_size=10, shuffle=True)
 
-checkpoint_path = "model.cpt"
-
-node_nf=dataset.node_nf
-hidden_nf = 128
-model = LeapFrogIntegrator(network=EGCL(node_nf, node_nf, hidden_nf), n_iter=10, dt=femtosecond_to_lj(0.5), r_cut=ang_to_lj(3), kBT=kelvin_to_lj(temp), box=get_box(dataset))
+model = LeapFrogIntegrator(network=EGCL(dataset.node_nf, dataset.node_nf, hidden_nf=128), n_iter=10, dt=picosecond_to_lj(10), r_cut=ang_to_lj(3), kBT=kelvin_to_lj(temp), box=get_box(dataset))
 model.to(torch.double)
 
-#checkpoint = torch.load(checkpoint_path, weights_only=False)
-#model.load_state_dict(checkpoint['model_state_dict'])
-
 for i, data in enumerate(loader):
-    out, _ = model(data.clone())
-    rmsd = np.sqrt(((data.pos.detach().numpy() - out.pos.detach().numpy())**2).sum(-1).mean())
-    data_ = model.reverse(out.clone())
-    check = torch.allclose(data_.pos, data.pos, atol=1e-5)
+    print(data.h)
+    dequant_h, ldj = model.dequantize(data.h)
+
+    print(dequant_h)
+    print(ldj)
     
-    print(check)
-    if not check:
-        print(data.pos)
-        print(out.pos)
-        print(data_.pos)
-        break
+    quant_h = model.quantize(dequant_h)
+    print(quant_h)
     
-        
-print("Done")
+    print(data.h == quant_h)
+    break
  
