@@ -1,8 +1,8 @@
 from enflow.nn.model import ENFlow
-from enflow.data.qm9 import QM9
+from enflow.data.sdf import SDFDataset
 from enflow.data import transforms
 import torch
-from torch_geometric.loader import DataLoader
+from enflow.data.base import DataLoader
 from enflow.units.conversion import ang_to_lj, kelvin_to_lj, picosecond_to_lj
 import torch_geometric.transforms as T
 from enflow.units.constants import sigma
@@ -14,10 +14,10 @@ def write_xyz(out, file):
             x = x*sigma*1e10
             f.write("%s %.18g %.18g %.18g\n" % ('Ar', x[0].item(), x[1].item(), x[2].item()))
 
-temp = 120
+temp = 300
 
-dataset = QM9(root="moldata/qm9", transform=T.Compose([transforms.ConvertPositions('ang'), transforms.RandomizeVelocity(temp)]))
-loader = DataLoader(dataset, batch_size=1, shuffle=False)
+dataset = SDFDataset(raw_file="data/qm9/raw.sdf", processed_file="data/qm9/processed.pt", transform=transforms.Compose([transforms.ConvertPositionsFrom('ang'), transforms.Center(), transforms.RandomizeVelocity(temp)]))
+loader = DataLoader(dataset, batch_size=10, shuffle=True)
 
 checkpoint_path = "model.cpt"
 
