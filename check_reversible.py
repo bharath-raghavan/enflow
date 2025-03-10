@@ -26,7 +26,7 @@ checkpoint_path = "model.cpt"
 
 node_nf=dataset.node_nf
 hidden_nf = 128
-model = LeapFrogIntegrator(network=EGCL(node_nf, node_nf, hidden_nf), n_iter=10, dt=femtosecond_to_lj(0.5), r_cut=ang_to_lj(3), kBT=kelvin_to_lj(temp), box=get_box(dataset))
+model = VelocityVerletIntegrator(network=EGCL(node_nf, node_nf, hidden_nf), n_iter=10, dt=picosecond_to_lj(5), r_cut=ang_to_lj(3), kBT=kelvin_to_lj(temp), box=get_box(dataset))
 model.to(torch.double)
 
 #checkpoint = torch.load(checkpoint_path, weights_only=False)

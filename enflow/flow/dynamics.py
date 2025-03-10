@@ -9,7 +9,7 @@ class LeapFrogIntegrator(BaseFlow):
         
     def forward(self, data):
         ldj = 0
-        data.h, ldj = self.dequantize(data.h)
+        data.h = self.dequantize(data.h)
         for network in self.networks:
             edges = data.get_edges(self.r_cut)
             Q, F, G = network(data.h, edges, data.pos)
@@ -44,6 +44,8 @@ class VelocityVerletIntegrator(BaseFlow):
     
     def forward(self, data):
         ldj = 0
+        data.h = self.dequantize(data.h)
+        
         edges = data.get_edges(self.r_cut)
         Q, F, G = self.networks[0](data.h, edges, data.pos)
         for i in range(1,self.n_iter+1):
@@ -82,4 +84,6 @@ class VelocityVerletIntegrator(BaseFlow):
             data.g = data.g - G*self.dt_2
             scale = 0.5*(1+torch.exp(Q))
             data.vel = (data.vel - F*self.dt_2)/scale
+            
+        data.h = self.quantize(data.h)
         return data

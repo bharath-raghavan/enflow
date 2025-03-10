@@ -16,38 +16,28 @@ class BaseFlow(torch.nn.Module):
         self.softening = softening
         self.dequant_scale = dequant_scale
         self.to(device)
+    
+    def get_lj_potential(self, data):
+        H = 0
+        for mol in data:
+            dist_sq = torch.triu((mol.pos.unsqueeze(1) - mol.pos).pow(2).sum(dim=2))
+            r_sq = dist_sq[dist_sq != 0] + self.softening
+            r_6 = r_sq.pow(3)
+            r_12 = r_6.pow(2)
+            H += 4*(1/r_12 - 1/r_6).sum()
+        return H 
 
     def nll(self, out, ldj):
-        z = torch.cat([out.h, out.g])
-        log_pz = - out.get_lj_hamiltonian(self.softening)/self.kBT - out.num_atoms*self.z_lj - (z*z).sum()*0.5 - math.log(math.sqrt(2*math.pi))
-        log_px = ldj + log_pz
+        H = self.get_lj_potential(out) + ((out.vel**2).sum() + (out.h**2).sum() + (out.g**2).sum())*0.5
+        logZ = - out.num_atoms*( math.log(self.z_lj) - (1.5+out.h.shape[1])*math.log(2*math.pi*self.kBT) )
+        log_px = - H/self.kBT + logZ + ldj
         return -log_px/out.num_mols 
     
     def dequantize(self, z):
         z = z.to(torch.float64)
-        return z + self.dequant_scale*torch.rand_like(z).detach(), 0
+        return z + self.dequant_scale*torch.rand_like(z).detach()
     
     def quantize(self, z): return torch.floor(z)
-    
-    #def dequantize(self, z):
-    #    # Transform discrete values to continuous volumes
-    #    z = z.to(torch.float64)
-    #    z = z + torch.rand_like(z).detach()
-    #    z = z / self.quants
-    #    ldj = -np.log(self.quants) * np.prod(z.shape[1:])
-    
-    #    z = z * (1 - self.alpha) + 0.5 * self.alpha  # Scale to prevent boundaries 0 and 1
-    #    ldj += np.log(1 - self.alpha) * np.prod(z.shape[1:])
-    #    ldj += (-torch.log(z) - torch.log(1-z)).sum()
-    #    z = torch.log(z) - torch.log(1-z)
-        
-    #    return z, ldj
-        
-    #def quantize(self, z):
-    #    z = torch.sigmoid(z)
-    #    z = (z - 0.5 * self.alpha) / (1 - self.alpha)
-    #    z = z * self.quants
-    #    return torch.floor(z).clamp(min=0, max=self.quants-1).to(torch.int32)
         
     def forward(self, data):
         pass

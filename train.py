@@ -57,7 +57,7 @@ for epoch in range(start_epoch, num_epochs):
     print('Batch/Total \tTraining Loss', flush=True)
     for i, data in enumerate(train_loader):
         out, ldj = model(data.to(device).clone())
-        loss = model.nll(out, ldj)
+        loss = model.nll(data, ldj)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()

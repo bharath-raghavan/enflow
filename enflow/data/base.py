@@ -108,18 +108,7 @@ class Data:
             edge_index = torch.cat((edge_index, edge_index_mol.T), dim=1)
             N_cnt += mol.num_atoms
 
-        return edge_index
-        
-    def get_lj_hamiltonian(self, softening):
-        H = 0
-        for mol in self:
-            H += (mol.vel**2).sum()/2
-            dist_sq = torch.triu((mol.pos.unsqueeze(1) - mol.pos).pow(2).sum(dim=2))
-            r_sq = dist_sq[dist_sq != 0] + softening
-            r_6 = r_sq.pow(3)
-            r_12 = r_6.pow(2)
-            H += 4*(1/r_12 - 1/r_6).sum()
-        return H        
+        return edge_index       
         
 class DataLoader(torch.utils.data.DataLoader):
     def __init__(
