@@ -1,11 +1,13 @@
 import os
 import numpy as np
+import torch
+
 from enflow.flow.dynamics import LeapFrogIntegrator
 from enflow.nn.egcl import EGCL
 from enflow.data.sdf import SDFDataset
 from enflow.data.base import DataLoader
 from enflow.data import transforms
-import torch
+from enflow.flow.loss import Alchemical_NLL
 from enflow.utils.conversion import ang_to_lj, kelvin_to_lj, picosecond_to_lj, femtosecond_to_lj
 from enflow.utils.helpers import get_box
 
@@ -33,12 +35,13 @@ softening = 0.1
 box = get_box(dataset) + 10 # padding
 
 print(f"Model params: hidden_nf={node_nf} hidden_nf={hidden_nf} n_iter={n_iter} dt={dt} r_cut={r_cut} kBT={kBT} softening={softening} box={box}", flush=True)
-model = LeapFrogIntegrator(network=EGCL(node_nf, node_nf, hidden_nf), n_iter=n_iter, dt=dt, r_cut=r_cut, kBT=kBT, softening=softening, device=device, box=box)    
+model = LeapFrogIntegrator(network=EGCL(node_nf, node_nf, hidden_nf), n_iter=n_iter, dt=dt, r_cut=r_cut, box=box).to(device)   
 model.to(torch.double)
 
 lr = 1e-3
 optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=0.5, total_iters=60)
+nll = Alchemical_NLL(kBT=kBT, softening=softening)
 
 if os.path.exists(checkpoint_path):
     print("Loading from saved state", flush=True)
@@ -57,7 +60,7 @@ for epoch in range(start_epoch, num_epochs):
     print('Batch/Total \tTraining Loss', flush=True)
     for i, data in enumerate(train_loader):
         out, ldj = model(data.to(device).clone())
-        loss = model.nll(data, ldj)
+        loss = nll(data, ldj)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
