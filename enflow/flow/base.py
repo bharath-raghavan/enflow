@@ -3,19 +3,16 @@ import torch
 import numpy as np
             
 class BaseFlow(torch.nn.Module):
-    def __init__(self, network, n_iter, dt, r_cut, kBT, box, partition_func=10, softening=0, dequant_scale=1, device='cpu'):
+    def __init__(self, network, n_iter, dt, r_cut, box, dequant_scale=1):
         super().__init__()
         self.n_iter = n_iter
         self.networks = torch.nn.ModuleList(self.make_networks(network))
         self.dt = dt
         self.dt_2 = 0.5*dt
         self.r_cut = r_cut
-        self.kBT = kBT
-        self.z_lj = partition_func
         self.box = box
-        self.softening = softening
         self.dequant_scale = dequant_scale
-        self.to(device)
+        self.to(torch.double)
     
     def get_lj_potential(self, data):
         H = 0
