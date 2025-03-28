@@ -25,7 +25,7 @@ class EGCL(nn.Module):
     """
 
 
-    def __init__(self, input_nf, output_nf, hidden_nf, act_fn=nn.ReLU(), coords_weight=1.0, attention=False, clamp=False, norm_diff=False, tanh=False):
+    def __init__(self, input_nf, output_nf, hidden_nf, act_fn=nn.SiLU(), coords_weight=1.0, attention=False, clamp=False, norm_diff=False, tanh=False):
         super().__init__()
         input_edge = input_nf * 2
         self.coords_weight = coords_weight
