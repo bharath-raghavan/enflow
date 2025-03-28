@@ -43,6 +43,7 @@ def init_ddp():
 def main(temp, num_epochs, hidden_nf, n_iter, dt, r_cut, softening, batch_size, lr, checkpoint_path, log_interval):
     start_epoch = 0
     kBT = kelvin_to_lj(temp)
+    checkpoint = None
     
     world_size, world_rank, local_rank, num_cpus_per_task = init_ddp()
 
@@ -61,23 +62,22 @@ def main(temp, num_epochs, hidden_nf, n_iter, dt, r_cut, softening, batch_size, 
     if os.path.exists(checkpoint_path):
         if world_rank == 0: print("Loading from saved state", flush=True)
         checkpoint = torch.load(checkpoint_path, weights_only=False)
+        #dist.barrier(device_ids=[local_rank])
         model.load_state_dict(checkpoint['model_state_dict'])
         start_epoch = checkpoint['epoch']+1
         
     model = DDP(model, device_ids=[local_rank])
     
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    if os.path.exists(checkpoint_path): optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    if checkpoint: optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
     nll = Alchemical_NLL(kBT=kBT, softening=softening)
     #scheduler = StepLR(optimizer, step_size=1, gamma=gamma)
-    dist.barrier()
     
     if world_rank == 0:
         print('Epoch \tTraining Loss \t   TGPU (s)', flush=True)
     
     for epoch in range(start_epoch, num_epochs):
-        epoch_losses = []
         losses = []
     
         sampler.set_epoch(epoch)
@@ -108,7 +108,6 @@ def main(temp, num_epochs, hidden_nf, n_iter, dt, r_cut, softening, batch_size, 
         epoch_loss = np.mean(losses)
         
         if world_rank == 0:
-        
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.module.state_dict(),

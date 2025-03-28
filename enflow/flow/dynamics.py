@@ -6,20 +6,24 @@ class LeapFrogIntegrator(BaseFlow):
         networks = []
         for i in range(self.n_iter): networks.append(network)
         return networks
-        
+
     def forward(self, data):
         ldj = 0
+
         data.h = self.dequantize(data.h)
         for network in self.networks:
             edges = data.get_edges(self.r_cut)
             Q, F, G = network(data.h, edges, data.pos)
+
             data.vel = torch.exp(Q) * data.vel + F*self.dt
             data.g = data.g + G*self.dt
             
             data.pos = data.pos + data.vel*self.dt
             data.pbc(self.box)
             data.h = data.h + data.g*self.dt
+
             ldj += Q.sum()
+
         return data, ldj
 
     def reverse(self, data):
@@ -34,6 +38,7 @@ class LeapFrogIntegrator(BaseFlow):
             data.vel = (data.vel - F*self.dt)/torch.exp(Q)
             
         data.h = self.quantize(data.h)
+
         return data
         
 class VelocityVerletIntegrator(BaseFlow):

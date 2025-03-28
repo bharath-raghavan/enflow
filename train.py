@@ -40,7 +40,7 @@ model.to(torch.double)
 
 lr = 1e-3
 optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=0.5, total_iters=60)
+#scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=0.5, total_iters=60)
 nll = Alchemical_NLL(kBT=kBT, softening=softening)
 
 if os.path.exists(checkpoint_path):
@@ -48,7 +48,7 @@ if os.path.exists(checkpoint_path):
     checkpoint = torch.load(checkpoint_path, weights_only=False)
     model.load_state_dict(checkpoint['model_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+    #scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
     start_epoch = checkpoint['epoch']+1
 
 for epoch in range(start_epoch, num_epochs):
@@ -73,19 +73,19 @@ for epoch in range(start_epoch, num_epochs):
             epoch_losses.append(mean)
             losses = []
     
-    before_lr = optimizer.param_groups[0]["lr"]
-    scheduler.step()
-    after_lr = optimizer.param_groups[0]["lr"]
-    print("Learning rate updated from %.4f to %.4f" % (before_lr, after_lr), flush=True)
+    #before_lr = optimizer.param_groups[0]["lr"]
+    #scheduler.step()
+    #after_lr = optimizer.param_groups[0]["lr"]
+    #print("Learning rate updated from %.4f to %.4f" % (before_lr, after_lr), flush=True)
                 
     print('Total loss: \t%.2f' % (np.mean(epoch_losses)), flush=True)
     # save checkpoint
-    torch.save({
-        'epoch': epoch,
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-        'scheduler_state_dict': scheduler.state_dict()
-    }, checkpoint_path)
-    print("State saved", flush=True)
+    #torch.save({
+    #    'epoch': epoch,
+    #    'model_state_dict': model.state_dict(),
+    #    'optimizer_state_dict': optimizer.state_dict(),
+    #    'scheduler_state_dict': scheduler.state_dict()
+    #}, checkpoint_path)
+    #print("State saved", flush=True)
                 
         
