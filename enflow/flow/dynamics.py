@@ -9,33 +9,44 @@ class LeapFrogIntegrator(BaseFlow):
 
     def forward(self, data):
         ldj = 0
-
         data.h = self.dequantize(data.h)
+        
         for network in self.networks:
             edges = data.get_edges(self.r_cut)
             Q, F, G = network(data.h, edges, data.pos)
-
-            data.vel = torch.exp(Q) * data.vel + F*self.dt
-            data.g = data.g + G*self.dt
             
-            data.pos = data.pos + data.vel*self.dt
+            data = self.data_to_fixed(data)
+            
+            data.vel = torch.exp(Q) * data.vel + self.to_fixed(F*self.dt)
+            data.g = data.g + self.to_fixed(G*self.dt)
+            
+            data.pos = data.pos + (data.vel*self.dt).type(data.pos.dtype)
+            data.h = data.h + (data.g*self.dt).type(data.h.dtype)
+            
+            data = self.data_from_fixed(data)
             data.pbc(self.box)
-            data.h = data.h + data.g*self.dt
-
+            
             ldj += Q.sum()
 
         return data, ldj
 
     def reverse(self, data):
         for network in reversed(self.networks):
-            data.h = data.h - data.g*self.dt
-            data.pos = data.pos - data.vel*self.dt
+            data = self.data_to_fixed(data)
+        
+            data.h = data.h - (data.g*self.dt).type(data.h.dtype)
+            data.pos = data.pos - (data.vel*self.dt).type(data.pos.dtype)
+            
+            data = self.data_from_fixed(data)
             data.pbc(self.box)
             
             edges = data.get_edges(self.r_cut)
             Q, F, G = network(data.h, edges, data.pos)
-            data.g = data.g - G*self.dt
-            data.vel = (data.vel - F*self.dt)/torch.exp(Q)
+            
+            data = self.data_to_fixed(data)
+            data.g = data.g - self.to_fixed(G*self.dt)
+            data.vel = (data.vel - self.to_fixed(F*self.dt))/torch.exp(Q)
+            data = self.data_from_fixed(data)
             
         data.h = self.quantize(data.h)
 

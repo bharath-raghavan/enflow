@@ -26,7 +26,7 @@ checkpoint_path = "model.cpt"
 
 node_nf=dataset.node_nf
 hidden_nf = 128
-model = LeapFrogIntegrator(network=EGCL(node_nf, node_nf, hidden_nf), n_iter=10, dt=picosecond_to_lj(10), r_cut=ang_to_lj(3), box=get_box(dataset))
+model = LeapFrogIntegrator(network=EGCL(node_nf, node_nf, hidden_nf), n_iter=10, dt=picosecond_to_lj(100), r_cut=ang_to_lj(3), box=get_box(dataset))
 model.to(torch.double)
 
 #checkpoint = torch.load(checkpoint_path, weights_only=False)
@@ -34,7 +34,7 @@ model.to(torch.double)
 
 for i, data in enumerate(loader):
     out, _ = model(data.clone())
-    rmsd = np.sqrt(((data.pos.detach().numpy() - out.pos.detach().numpy())**2).sum(-1).mean())
+    #rmsd = np.sqrt(((data.pos.detach().numpy() - out.pos.detach().numpy())**2).sum(-1).mean())
     data_ = model.reverse(out.clone())
     check = torch.allclose(data_.pos, data.pos, atol=1e-8)
     
