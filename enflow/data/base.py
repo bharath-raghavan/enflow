@@ -16,12 +16,12 @@ class Data:
     
     def clone(self):
         return Data(z=self.z,\
-            h=self.h.detach().clone(),\
-            g=self.g.detach().clone(),
-            pos=self.pos.detach().clone(),\
-            vel=self.vel.detach().clone(),\
+            h=self.h.clone(),\
+            g=self.g.clone(),
+            pos=self.pos.clone(),\
+            vel=self.vel.clone(),\
             N=self.N,\
-            label=self.label,
+            label=self.label,\
             device=self.device)
     
     def get_mol(self, i):
@@ -64,7 +64,6 @@ class Data:
             return mol
     
     def to(self, device):
-        self.device = device
         h = self.h.to(device)
         g = self.g.to(device)
         pos = self.pos.to(device)
@@ -79,7 +78,7 @@ class Data:
                 vel=vel,
                 N=N,
                 label=self.label,
-                device=self.device
+                device=device
             )
     
     def pbc(self, box, reverse=False):
