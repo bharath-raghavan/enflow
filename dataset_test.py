@@ -23,26 +23,40 @@ temp = 300
 dataset = SDFDataset(raw_file="data/qm9/raw.sdf", processed_file="data/qm9/processed.pt", transform=transforms.Compose([transforms.ConvertPositionsFrom('ang'), transforms.Center(), transforms.RandomizeVelocity(temp)]))
 train_loader = DataLoader(dataset, batch_size=1, shuffle=False)
 
-print(dataset.box)
+for i, data in enumerate(train_loader):
+    print(data.pos)
+    data.pos = data.pos + 10
+    print(data.pos)
+    break
+    
+for i, data in enumerate(train_loader):
+    print(data.pos)
+    b = data.pos
+    b += 10
+    print(data.pos)
+    print(b)
+    break
 
-box = [0.4,0.4,0.4]
+#print(dataset.box)
 
-pos = torch.tensor([[0,0,0], [0.1, -0.1, 0.1], [0.15, 0.1, -0.1], [0.35, 0.1, 0.1], [-0.3, 0.1, 0]])
-z = ['H', 'H', 'C', 'N', 'P']
+#box = [0.4,0.4,0.4]
 
-print(pos)
-write_xyz('test1.xyz', pos, len(pos), z)
+#pos = torch.tensor([[0,0,0], [0.1, -0.1, 0.1], [0.15, 0.1, -0.1], [0.35, 0.1, 0.1], [-0.3, 0.1, 0]])
+#z = ['H', 'H', 'C', 'N', 'P']
 
-def do_push(coord, pos):
-    box_len = box[coord]
-    box_edge = box[coord]*0.5
-    pushing = - ( (pos[:,coord] >= box_edge)*box_len ) + ( (pos[:,coord] < -box_edge)*box_len )
-    return pushing
+#print(pos)
+#write_xyz('test1.xyz', pos, len(pos), z)
 
-pos_ = pos+torch.stack((do_push(0, pos), do_push(1, pos), do_push(2, pos)), dim=1)
-print(pos_)
-write_xyz('test2.xyz', pos_, len(pos), z)
+#def do_push(coord, pos):
+#    box_len = box[coord]
+#    box_edge = box[coord]*0.5
+#    pushing = - ( (pos[:,coord] >= box_edge)*box_len ) + ( (pos[:,coord] < -box_edge)*box_len )
+#    return pushing
 
-pos_ = pos_-torch.stack((do_push(0, pos_), do_push(1, pos_), do_push(2, pos_)), dim=1)
-print(pos_)
-write_xyz('test3.xyz', pos_, len(pos), z)
+#pos_ = pos+torch.stack((do_push(0, pos), do_push(1, pos), do_push(2, pos)), dim=1)
+#print(pos_)
+#write_xyz('test2.xyz', pos_, len(pos), z)
+
+#pos_ = pos_-torch.stack((do_push(0, pos_), do_push(1, pos_), do_push(2, pos_)), dim=1)
+#print(pos_)
+#write_xyz('test3.xyz', pos_, len(pos), z)
