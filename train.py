@@ -1,5 +1,6 @@
 import os
 import numpy as np
+import yaml
 import torch
 
 from enflow.flow.dynamics import LeapFrogIntegrator
@@ -11,81 +12,64 @@ from enflow.flow.loss import Alchemical_NLL
 from enflow.utils.conversion import ang_to_lj, kelvin_to_lj, picosecond_to_lj, femtosecond_to_lj
 from enflow.utils.helpers import get_box
 
-temp = 300
+def write_xyz(out, file):
+    with open(file, 'a') as f:
+        f.write("%d\n%s\n" % (10, ' '))
+        for x in out.pos:
+            #x = x*sigma*1e10
+            f.write("%s %.18g %.18g %.18g\n" % ('Ar', x[0].item(), x[1].item(), x[2].item()))
 
-dataset = SDFDataset(raw_file="data/qm9/raw.sdf", processed_file="data/qm9/processed.pt", transform=transforms.Compose([transforms.ConvertPositionsFrom('ang'), transforms.Center(), transforms.RandomizeVelocity(temp)]))
-train_loader = DataLoader(dataset, batch_size=5000, shuffle=False)
-print("Loaded dataset")
+def main(temp, num_epochs, hidden_nf, n_iter, dt, r_cut, softening, batch_size, lr, checkpoint_path, log_interval):
+        start_epoch = 0
+        kBT = kelvin_to_lj(temp)
+        dataset = SDFDataset(raw_file="data/qm9/raw.sdf", processed_file="data/qm9/processed.pt", transform=transforms.Compose([transforms.ConvertPositionsFrom('ang'), transforms.Center(), transforms.RandomizeVelocity(temp)]))
+        train_loader = DataLoader(dataset, batch_size=5000, shuffle=False)
+        print("Loaded dataset")
+        box = get_box(dataset) + 0.5 # padding
+        node_nf=dataset.node_nf
+        print(f"Box size: {box}", flush=True)
+        model = LeapFrogIntegrator(network=EGCL(node_nf, node_nf, hidden_nf), n_iter=n_iter, dt=dt, r_cut=r_cut, box=box)
+        model.to(torch.double)
 
-start_epoch = 0
-checkpoint_path = "model.cpt"
-num_epochs = 500
-checkpoint = None
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+        #scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=0.5, total_iters=60)
+        nll = Alchemical_NLL(kBT=kBT, softening=softening)
 
-device = 'cpu'#torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(f"Device used is {device}")
-
-node_nf=dataset.node_nf
-hidden_nf = 128
-n_iter = 10
-dt = femtosecond_to_lj(2)
-kBT = kelvin_to_lj(temp)
-r_cut = ang_to_lj(3)
-softening = 0.1
-box = get_box(dataset) + 10 # padding
-
-print(f"Model params: hidden_nf={node_nf} hidden_nf={hidden_nf} n_iter={n_iter} dt={dt} r_cut={r_cut} kBT={kBT} softening={softening} box={box}", flush=True)
-model = LeapFrogIntegrator(network=EGCL(node_nf, node_nf, hidden_nf), n_iter=n_iter, dt=dt, r_cut=r_cut, box=box).to(device)   
-model.to(torch.double)
-
-lr = 1e-3
-optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-#scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=0.5, total_iters=60)
-nll = Alchemical_NLL(kBT=kBT, softening=softening)
-
-if os.path.exists(checkpoint_path):
-    print("Loading from saved state", flush=True)
-    checkpoint = torch.load(checkpoint_path, weights_only=False)
-    model.load_state_dict(checkpoint['model_state_dict'])
-    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    #scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-    start_epoch = checkpoint['epoch']+1
-
-for epoch in range(start_epoch, num_epochs):
-    epoch_losses = []
-    losses = []
-    
-    print(f"Starting epoch {epoch}:", flush=True)
-    
-    print('Batch/Total \tTraining Loss', flush=True)
-    for i, data in enumerate(train_loader):
-        out, ldj = model(data.to(device).clone())
-        loss = nll(data, ldj)
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        losses.append(loss.item())
-
-        if not i % 10:
-            mean = np.mean(losses)
-            print('%.5i/%.5i \t    %.2f' % (i, len(train_loader), mean), flush=True)
-            epoch_losses.append(mean)
+        for epoch in range(start_epoch, num_epochs):
+            epoch_losses = []
             losses = []
+
+            print(f"Starting epoch {epoch}:", flush=True)
+
+            print('Batch/Total \tTraining Loss', flush=True)
+            for i, data in enumerate(train_loader):
+                out, ldj = model(data)
+                loss = nll(data, ldj)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+                losses.append(loss.item())
+            
+                write_xyz(out, f'traj.xyz')
+            
+                if not i % 10:
+                    mean = np.mean(losses)
+                    print('%.5i/%.5i \t    %.2f' % (i, len(train_loader), mean), flush=True)
+                    epoch_losses.append(mean)
+                    losses = []
+
+            #before_lr = optimizer.param_groups[0]["lr"]
+            #scheduler.step()
+            #after_lr = optimizer.param_groups[0]["lr"]
+            #print("Learning rate updated from %.4f to %.4f" % (before_lr, after_lr), flush=True)
+            
+            print('Total loss: \t%.2f' % (np.mean(epoch_losses)), flush=True)
+
+if __name__ == "__main__":    
+    yaml_file = 'config.yaml'
+    with open(yaml_file, 'r') as f: args = yaml.load(f, Loader=yaml.FullLoader)
+
+    main(float(args['temp']), int(args['num_epochs']), int(args['hidden_nf']), int(args['n_iter']), femtosecond_to_lj(float(args['dt'])), ang_to_lj(float(args['r_cut'])),\
+         float(args['softening']), int(args['batch_size']), float(args['lr']), args['checkpoint_path'], int(args['log_interval']))
     
-    #before_lr = optimizer.param_groups[0]["lr"]
-    #scheduler.step()
-    #after_lr = optimizer.param_groups[0]["lr"]
-    #print("Learning rate updated from %.4f to %.4f" % (before_lr, after_lr), flush=True)
-                
-    print('Total loss: \t%.2f' % (np.mean(epoch_losses)), flush=True)
-    # save checkpoint
-    #torch.save({
-    #    'epoch': epoch,
-    #    'model_state_dict': model.state_dict(),
-    #    'optimizer_state_dict': optimizer.state_dict(),
-    #    'scheduler_state_dict': scheduler.state_dict()
-    #}, checkpoint_path)
-    #print("State saved", flush=True)
-                
-        
