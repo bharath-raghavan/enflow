@@ -151,4 +151,4 @@ if __name__ == "__main__":
         dt = femtosecond_to_lj(float(args['dt']))
     
     main(float(args['temp']), int(args['num_epochs']), int(args['hidden_nf']), int(args['n_iter']), dt, ang_to_lj(float(args['r_cut'])),\
-         float(args['softening']), int(args['batch_size']), float(args['lr']), args['checkpoint_path'], int(args['log_interval']), , int(args['box_pad']))
+         float(args['softening']), int(args['batch_size']), float(args['lr']), args['checkpoint_path'], int(args['log_interval']), int(args['box_pad']))
