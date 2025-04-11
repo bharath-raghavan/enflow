@@ -14,16 +14,6 @@ class Data:
         self.label = label
         self.device = device
     
-    def clone(self):
-        return Data(z=self.z,\
-            h=self.h.clone(),\
-            g=self.g.clone(),
-            pos=self.pos.clone(),\
-            vel=self.vel.clone(),\
-            N=self.N,\
-            label=self.label,\
-            device=self.device)
-    
     def get_mol(self, i):
         if self.N.ndim == 0:
             return self
@@ -84,14 +74,9 @@ class Data:
     def pbc(self, box, reverse=False):
         def get_push(coord):
             box_len = box[coord]
-            box_edge = box[coord]*0.5
-            pushing = - ( (self.pos[:,coord] >= box_edge)*box_len ) + ( (self.pos[:,coord] < -box_edge)*box_len )
-            return pushing
-            
-        if reverse:
-            self.pos = self.pos - torch.stack((get_push(0), get_push(1), get_push(2)), dim=1)
-        else:
-            self.pos = self.pos + torch.stack((get_push(0), get_push(1), get_push(2)), dim=1)
+            return (self.pos[:,coord]/box_len).round()*box_len
+
+        self.pos = self.pos - torch.stack((get_push(0), get_push(1), get_push(2)), dim=1)
     
     def get_edges(self, r_cut):
         # get nieghbour list
