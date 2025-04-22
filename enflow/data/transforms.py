@@ -38,8 +38,8 @@ class Center:
         return data
 
 class RandomizeVelocity:
-    def __init__(self, temp):
-        self.kBT = kelvin_to_lj(temp)
+    def __init__(self, kBT):
+        self.kBT = kBT
         self.pse = Chem.GetPeriodicTable()
         
     def generate_velocities(self, n):
