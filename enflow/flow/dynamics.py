@@ -1,7 +1,7 @@
 import torch
 from .base import BaseFlow
 
-class LeapFrogIntegrator(BaseFlow):
+class LFIntegrator(BaseFlow):
     def make_networks(self, network):
         networks = []
         for i in range(self.n_iter): networks.append(network)
@@ -41,7 +41,7 @@ class LeapFrogIntegrator(BaseFlow):
 
         return data
         
-class VelocityVerletIntegrator(BaseFlow):
+class VVIntegrator(BaseFlow):
     def make_networks(self, network):
         networks = []
         for i in range(self.n_iter+1): networks.append(network)
