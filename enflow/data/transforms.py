@@ -1,6 +1,6 @@
 import torch
 
-from ..utils.conversion import m_to_lj, kelvin_to_lj
+from ..utils.conversion import dist_to_lj, vel_to_lj, kelvin_to_lj
 from ..utils.helpers import get_box
 
 import numpy as np
@@ -19,13 +19,19 @@ class Compose:
 
 class ConvertPositionsFrom:
     def __init__(self, input_unit):
-        if input_unit == 'ang':
-            self.factor = 1e-10
-        elif input_unit == 'nm':
-            self.factor = 1e-9
+        self.input_unit = input_unit
 
     def __call__(self, data):
-        data.pos = m_to_lj(data.pos*self.factor)
+        data.pos = dist_to_lj(data.pos, self.input_unit)
+        return data
+        
+class ConvertVelocitiesFrom:
+    def __init__(self, input_unit1, input_unit2):
+        self.input_unit1 = input_unit1
+        self.input_unit2 = input_unit2
+
+    def __call__(self, data):
+        data.vel = vel_to_lj(data.vel, self.input_unit1, self.input_unit2)
         return data
         
 class Center:
