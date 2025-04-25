@@ -14,7 +14,6 @@ from enflow.data.sdf import SDFDataset
 from enflow.data.base import DataLoader
 from enflow.data import transforms
 from enflow.utils.conversion import dist_to_lj, kelvin_to_lj, time_to_lj, lj_to_dist, lj_to_kelvin
-from enflow.utils.helpers import get_box
 from enflow.utils.constants import sigma
 
 import torch.distributed as dist
@@ -69,14 +68,15 @@ class Main:
     
         with open(input, 'r') as f: args = yaml.load(f, Loader=yaml.FullLoader)
         
-        batch_size = int(args['dataset']['batch_size'])
-        dataset_type = args['dataset']['type']
-        self.checkpoint_path = args['dynamics']['checkpoint_path']
-        
         self.mode = 'train'
         if args['mode'] == 'generate': self.mode = 'gen'
         elif args['mode'] == 'dataset': self.mode = 'data'
         elif args['mode'] != 'train': eprint("error")
+        
+        if 'dynamics' in args and 'checkpoint_path' in args['dynamics']:
+             self.checkpoint_path = args['dynamics']['checkpoint_path']
+        else:
+            self.checkpoint_path = '' 
         
         if os.path.exists(self.checkpoint_path):
             if self.world_rank == 0: print("Loading from saved state", flush=True)
@@ -98,7 +98,8 @@ class Main:
             self.integrator = args['dynamics']['integrator'].lower()
             lj_kBT = kelvin_to_lj(float(args['training']['loss']['temp']))
             softening = float(args['training']['loss']['softening'])
-            
+        
+        dataset_type = args['dataset']['type']
         dataset_class = getattr(importlib.import_module(f"enflow.data.{dataset_type}"), f"{dataset_type.upper()}Dataset")
         dataset_args = {i:args['dataset'][i] for i in args['dataset'] if (i!='temp' and i!='batch_size' and i!='type')}
         
@@ -112,13 +113,16 @@ class Main:
         dataset_args['dist_unit'] = args['units']['dist']
         dataset_args['time_unit'] = args['units']['time']
         
-        if self.mode != 'train':
+        if self.mode == 'gen':
             dataset_args['node_nf'] = node_nf
             dataset_args['softening'] = softening
             dataset_args['temp'] = lj_to_kelvin(lj_kBT)
             dataset_args['box'] = [lj_to_dist(i, unit=args['units']['dist']) for i in box.tolist()]
-            dataset_args['n_atoms'] = checkpoint['N']                
-                
+            dataset_args['n_atoms'] = checkpoint['N']    
+            batch_size = 1
+        elif self.mode == 'train':
+            batch_size = int(args['training']['batch_size'])
+        
         self.dataset = dataset_class(**dataset_args, transform=transforms.Compose(T))
         
         if self.mode == 'data':
@@ -133,7 +137,7 @@ class Main:
         if not checkpoint:
             node_nf = self.dataset.node_nf
             box = get_box(self.dataset) + dist_to_lj(float(args['dynamics']['box_pad']), unit=args['units']['dist'])
-                 
+        
         network=EGCL(node_nf, node_nf, self.hidden_nf)
         integrator_class = getattr(importlib.import_module(f"enflow.flow.dynamics"), f"{self.integrator.upper()}Integrator")
         self.model = integrator_class(network=network, n_iter=n_iter, dt=dt, r_cut=r_cut, box=box).to(self.local_rank)
@@ -148,7 +152,7 @@ class Main:
             if self.world_rank == 0: eprint("In generate mode", flush=True)
             return    
         
-        if self.world_rank == 0: print("In training mode", flush=True)
+        if self.world_rank == 0: eprint("In training mode", flush=True)
         
         if args['training']['scheduler']:
             scheduler_step = float(args['training']['scheduler_step'])
