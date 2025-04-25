@@ -154,18 +154,29 @@ class BaseDataset(torch.utils.data.Dataset, ABC):
     
     @property  
     def node_nf(self):
-        return self.data_list[0].h.shape[1]   
+        return self.data_list[0].h.shape[1]
+    
+    @property  
+    def num_atoms_per_mol(self):
+        return self.data_list[0].N   
         
-    def append(self, z, h, g, pos, vel, N, label):
+    def append(self, z, h, pos, vel, N, label):
+        self.N_prev = 0
+        
         data = Data(
             z=z,
             h=h,
-            g=torch.zeros_like(h),
+            g=torch.normal(0, 1, size=h.shape, dtype=torch.float64),
             pos=pos,
-            vel=torch.zeros_like(pos),
+            vel=vel,
             N=N,
             label=label
         )
+        
+        if self.N_prev != 0: # check that all Ns same
+            if N != self.N_prev: print("error!")
+        
+        self.N_prev = N
     
         if self.transform:
             self.data_list.append(self.transform(data))

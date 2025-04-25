@@ -31,8 +31,8 @@ class SimulatedDatasetReporter(object):
         
         data = Data(
             z=['Ar']*N,
-            h=torch.rand(N, self.node_nf, dtype=torch.float64),
-            g=torch.rand(N, self.node_nf, dtype=torch.float64),
+            h=torch.normal(0, 1, size=((N, self.node_nf), dtype=torch.float64),
+            g=torch.normal(0, 1, size=((N, self.node_nf), dtype=torch.float64),
             pos=torch.tensor(pos, dtype=torch.float64),
             vel=torch.tensor(vel, dtype=torch.float64),
             N=N,

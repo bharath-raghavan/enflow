@@ -29,7 +29,6 @@ class SDFDataset(BaseDataset):
             self.append(
                 z=z,
                 h=h,
-                g=torch.normal(0, 1, size=h.shape),
                 pos=pos,
                 vel=torch.zeros_like(pos),
                 N=N,

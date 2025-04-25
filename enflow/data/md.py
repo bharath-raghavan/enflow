@@ -7,38 +7,36 @@ from ..utils.helpers import one_hot, ELEMENTS, get_element
 
 class MDDataset(BaseDataset):
     
-    def process_traj(self, u):
+    def process_traj(self, u, traj, dist_scale, time_scale):
         for frame, ts in enumerate(u.trajectory):
             z = [get_element(a.element, a.mass) for a in u.atoms]
-            #type_idx = [atom_types[i] for i in z]
-            #h = one_hot(torch.tensor(type_idx), num_classes=len(atom_types), dtype=torch.float64)
-
-            #self.append(
-            #    z=z,
-            #    h=h,
-            #    g=torch.normal(0, 1, size=h.shape),
-            #    pos=torch.tensor(u.atoms.positions, dtype=torch.float64),
-            #    vel=torch.tensor(u.atoms.velocities, dtype=torch.float64),
-            #    N=len(u.atoms),
-            #    label=traj + ' frame: ' + str(frame)
-            #)
+            type_idx = [atom_types[i] for i in z]
+            h = one_hot(torch.tensor(type_idx), num_classes=len(atom_types), dtype=torch.float64)
             
-            # below is nonesense for the lj dataset
-            N=len(u.atoms)
-            node_nf = 5
-            pos=torch.tensor(u.atoms.positions, dtype=torch.float64)
             self.append(
                 z=z,
-                h=torch.rand(N, node_nf, dtype=torch.float64),
-                g=torch.rand(N, node_nf, dtype=torch.float64), 
-                pos=pos,
-                vel=torch.zeros_like(pos),#torch.tensor(u.atoms.velocities, dtype=torch.float64),
+                h=h,
+                pos=torch.tensor(u.atoms.positions*dist_scale, dtype=torch.float64),
+                vel=torch.tensor(u.atoms.velocities*dist_scale/time_scale, dtype=torch.float64),
                 N=len(u.atoms),
-                label='bulla'
+                label=traj + ' frame: ' + str(frame)
             )
     
     def process(self, **input_params):
         
+        dist_units = input_params['dist_unit']
+        time_units = input_params['time_unit']
+        
+        if dist_units == 'ang':
+            dist_scale = 1
+        elif dist_units == 'nm':
+            dist_scale = 0.1
+            
+        if time_units == 'pico':
+            time_scale = 1
+        elif time_units == 'femto':
+            time_scale = 1e-3
+        
         for top, traj in tqdm(zip(input_params['top_file'], input_params['traj_file'])):
             u = MDAnalysis.Universe(top,  traj)
-            self.process_traj(u)
+            self.process_traj(u, traj, dist_scale, time_scale)
