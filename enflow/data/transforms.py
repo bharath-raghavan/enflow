@@ -1,7 +1,6 @@
 import torch
 
 from ..utils.conversion import dist_to_lj, vel_to_lj, kelvin_to_lj
-from ..utils.helpers import get_box
 
 import numpy as np
 from rdkit import Chem

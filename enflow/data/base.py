@@ -1,7 +1,7 @@
 import os
 from abc import ABC, abstractmethod
 import torch
-from enflow.utils.helpers import get_box
+from enflow.utils.helpers import get_box_len
 
 class Data:
     def __init__(self, z=None, h=None, g=None, pos=None, vel=None, N=None, label=None, device='cpu'):
@@ -133,16 +133,17 @@ class BaseDataset(torch.utils.data.Dataset, ABC):
             self.transform = None
         
         self.data_list = []
+        self.box = None
         
         if 'processed_file' in input_params:
             processed_file = input_params['processed_file']
             input_params.pop('processed_file')
             
             if os.path.exists(processed_file):
-                self.data_list = torch.load(processed_file, weights_only=False)
+                self.data_list, self.box = torch.load(processed_file, weights_only=False)
             else:
                 self.process(**input_params)
-                torch.save(self.data_list, processed_file)
+                torch.save((self.data_list, self.box), processed_file)
         else:
             self.process(**input_params)
     
@@ -158,10 +159,10 @@ class BaseDataset(torch.utils.data.Dataset, ABC):
     
     @property  
     def num_atoms_per_mol(self):
-        return self.data_list[0].N   
-        
+        return self.data_list[0].N
+    
     def append(self, z, h, pos, vel, N, label):
-        self.N_prev = 0
+        box=get_box_len(pos)
         
         data = Data(
             z=z,
@@ -173,11 +174,11 @@ class BaseDataset(torch.utils.data.Dataset, ABC):
             label=label
         )
         
-        if self.N_prev != 0: # check that all Ns same
-            if N != self.N_prev: print("error!")
+        if self.box != None: # check that all box_lens same
+            if not torch.equal(box, self.box): print("error!")
         
-        self.N_prev = N
-    
+        self.box = box
+        
         if self.transform:
             self.data_list.append(self.transform(data))
         else:

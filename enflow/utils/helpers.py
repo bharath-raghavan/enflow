@@ -11,20 +11,10 @@ ELEMENTS = { 1:'H' ,                                                            
                                           90:'Th',  91:'Pa',  92:'U' ,  93:'Np',  94:'Pu',  95:'Am',  96:'Cm',  97:'Bk',  98:'Cf',  99:'Es', 100:'Fm', 101:'Md', 102:'No', 103:'Lr'
 }
 
-def get_box(dataset):
-    def _get_box(pos):
-        # get bounding box
-        min_ = torch.min(pos, dim=0)[0].abs()
-        max_ = torch.max(pos, dim=0)[0].abs()
-        return torch.max(torch.stack((min_,max_)), dim=0)[0].round()*2 
-    
-    box = torch.tensor([0, 0, 0])
-
-    for data in dataset.data_list:
-        current_box = _get_box(data.pos)
-        box = torch.max(torch.stack((box, current_box)), dim=0)[0]
-    
-    return box
+def get_box_len(pos):
+    min_ = torch.min(pos, dim=0)[0]
+    max_ = torch.max(pos, dim=0)[0]
+    return (max_-min_).round()
 
 def get_element(elem, mass):
     if elem == '':

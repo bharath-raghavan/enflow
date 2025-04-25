@@ -136,7 +136,9 @@ class Main:
         
         if not checkpoint:
             node_nf = self.dataset.node_nf
-            box = get_box(self.dataset) + dist_to_lj(float(args['dynamics']['box_pad']), unit=args['units']['dist'])
+            box_native_units = self.dataset.box + float(args['dynamics']['box_pad'])
+            box = dist_to_lj(box_native_units, unit=args['units']['dist'])
+            if self.world_rank == 0: eprint(f"Using box of size {box_native_units[0]} x {box_native_units[1]} x {box_native_units[2]}")
         
         network=EGCL(node_nf, node_nf, self.hidden_nf)
         integrator_class = getattr(importlib.import_module(f"enflow.flow.dynamics"), f"{self.integrator.upper()}Integrator")
