@@ -109,13 +109,15 @@ class Main:
         else:
             T.append(transforms.ConvertVelocitiesFrom(args['units']['dist'], args['units']['time']))
         
+        dataset_args['dist_unit'] = args['units']['dist']
+        dataset_args['time_unit'] = args['units']['time']
+        
         if self.mode != 'train':
             dataset_args['node_nf'] = node_nf
             dataset_args['softening'] = softening
             dataset_args['temp'] = lj_to_kelvin(lj_kBT)
             dataset_args['box'] = [lj_to_dist(i, unit=args['units']['dist']) for i in box.tolist()]
-            dataset_args['dist_unit'] = args['units']['dist']
-            dataset_args['time_unit'] = args['units']['time']                
+            dataset_args['n_atoms'] = checkpoint['N']                
                 
         self.dataset = dataset_class(**dataset_args, transform=transforms.Compose(T))
         
@@ -181,7 +183,7 @@ class Main:
         if self.world_rank == 0:
             print('Epoch \tTraining Loss \t   TGPU (s)', flush=True)
 
-        for epoch in range(self.start_epoch, self.num_epochs):
+        for epoch in range(self.start_epoch, self.start_epoch+self.num_epochs):
             losses = []
 
             if self.ddp: self.sampler.set_epoch(epoch)
@@ -223,7 +225,8 @@ class Main:
                        'integrator': self.integrator,
                        'n_iter': self.model.module.n_iter,
                        'dt': self.model.module.dt,
-                       'r_cut': self.model.module.r_cut
+                       'r_cut': self.model.module.r_cut,
+                       'N': self.dataset.num_atoms_per_mol
                    }
                 if self.scheduler: to_save['scheduler_state_dict'] = self.scheduler.state_dict()
                 
