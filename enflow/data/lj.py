@@ -6,7 +6,7 @@ import openmm as mm
 import openmm.app as app
 import openmm.unit as unit
 
-def arrange_points_on_grid(n, box, space):
+def arrange_points_on_grid(n, box, gap):
     """Arranges n points on a 3D grid.
 
     Args:
@@ -19,9 +19,9 @@ def arrange_points_on_grid(n, box, space):
     num_y = int(np.ceil((n/num_z)**(1/2)))
     num_x = int(np.ceil(n/(num_y*num_z)))
 
-    x = np.linspace(space, box[0]-space, num_x)
-    y = np.linspace(space, box[1]-space, num_y)
-    z = np.linspace(space, box[2]-space, num_z)
+    x = np.linspace(gap, box[0]-gap, num_x)
+    y = np.linspace(gap, box[1]-gap, num_y)
+    z = np.linspace(gap, box[2]-gap, num_z)
 
     xv, yv, zv = np.meshgrid(x, y, z)
     
@@ -35,9 +35,10 @@ class LJDataset(SimulatedDataset):
         scale = 1
         dist_units = input_params['dist_unit']
         if dist_units == 'ang': scale = 0.1
-        L = np.array(input_params['box'])*scale*unit.nanometers # assume square box for now
+        L = np.array(input_params['box'])*scale*unit.nanometers
         softening = input_params['softening']
         cutoff = input_params.get('cutoff', 3.0)
+        gap = input_params.get('gap', 1)*scale
         
         # Lennard-Jones parameters
         sigma = sig * 1e10 * unit.angstrom
@@ -57,7 +58,7 @@ class LJDataset(SimulatedDataset):
         topology.setPeriodicBoxVectors(np.eye(3)*L)
 
         # Generate positions on a grid
-        positions = arrange_points_on_grid(N, L._value, 0.5)*unit.nanometers
+        positions = arrange_points_on_grid(N, L._value, gap)*unit.nanometers
         
         custom_lj = '4*epsilon*((sigma/(scale*sigma + r))^12-(sigma/(scale*sigma + r))^6); sigma=0.5*(sigma1+sigma2); epsilon=sqrt(epsilon1*epsilon2)'
         custom_nb_force = mm.CustomNonbondedForce(custom_lj)
