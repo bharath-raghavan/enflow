@@ -16,6 +16,12 @@ def get_box_len(pos):
     max_ = torch.max(pos, dim=0)[0]
     return (max_-min_).round()
 
+def get_periodic_images(pos, bl):
+    return torch.cat([pos+torch.tensor([a,b,c], dtype=pos.dtype, device=pos.device) for c in [-bl[2],bl[2],0] for b in [-bl[1],bl[1],0] for a in [-bl[0],bl[0],0]])
+    
+def wrap_ids_across_periodic_img(ids, N):
+    return ids - (ids//N)*N
+    
 def get_element(elem, mass):
     if elem == '':
         mass_int = int(round(mass))
@@ -38,3 +44,21 @@ def one_hot(index, num_classes=None, dtype=None):
     out = torch.zeros((index.size(0), num_classes), dtype=dtype,
                       device=index.device)
     return out.scatter_(1, index.unsqueeze(1), 1)
+    
+def unsorted_segment_sum(data, segment_ids, num_segments):
+    """Custom PyTorch op to replicate TensorFlow's `unsorted_segment_sum`."""
+    result_shape = (num_segments, data.size(1))
+    result = data.new_full(result_shape, 0)  # Init empty result tensor.
+    segment_ids = segment_ids.unsqueeze(-1).expand(-1, data.size(1))
+    result.scatter_add_(0, segment_ids, data)
+    return result
+
+
+def unsorted_segment_mean(data, segment_ids, num_segments):
+    result_shape = (num_segments, data.size(1))
+    segment_ids = segment_ids.unsqueeze(-1).expand(-1, data.size(1))
+    result = data.new_full(result_shape, 0)  # Init empty result tensor.
+    count = data.new_full(result_shape, 0)
+    result.scatter_add_(0, segment_ids, data)
+    count.scatter_add_(0, segment_ids, torch.ones_like(data))
+    return result / count.clamp(min=1)

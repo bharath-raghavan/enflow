@@ -1,7 +1,19 @@
 import os
 from abc import ABC, abstractmethod
 import torch
-from enflow.utils.helpers import get_box_len
+from ..utils.helpers import get_box_len, get_periodic_images, wrap_ids_across_periodic_img
+
+class Edges: # edge class to handle coord_diff over periodic box
+    def __init__(self, edge_index, box, coord):
+        self.box = box
+        self.row, self.col = edge_index
+        self.coord = coord
+    
+    @property
+    def coord_diff(self):
+        coord_diff = self.coord[self.row] - self.coord[self.col]
+        coord_diff = coord_diff - (coord_diff>(self.box*0.5))*self.box*0.5 # get nearest periodic image dist
+        return coord_diff
 
 class Data:
     def __init__(self, z=None, h=None, g=None, pos=None, vel=None, N=None, box=None, label=None, device='cpu'):
@@ -76,23 +88,29 @@ class Data:
             )
     
     def pbc(self):
-        self.pos = self.pos - (self.pos/self.box).round()*self.box # element by element operation b/w pos and box
+        self.pos = self.pos - (self.pos/self.box).round()*self.box # element by element operations b/w pos and box
             
     def get_edges(self, r_cut):
-        # get nieghbour list
+        # get neighbour list
         r_sq = r_cut*r_cut
 
         edge_index = torch.empty((2, 0), dtype=torch.int, device=self.device)
-
+        boxes = []
         N_cnt = 0
         for mol in self:
-            dist_sq = (mol.pos.unsqueeze(1) - mol.pos).pow(2).sum(dim=2)
-            edge_index_mol = (dist_sq < r_sq).nonzero() + N_cnt
+            box = mol.box[0] # assume that each atom in mol has same box lens (should be true), so use only first one
+            pos_all_periodic_images = get_periodic_images(mol.pos, box) # replicate positions 27 times
+            
+            dist_sq = (pos_all_periodic_images.unsqueeze(1) - mol.pos).pow(2).sum(dim=2) # calculating diff with all (27) images takes time, TODO: find way to reduce time
+            ids = (dist_sq < r_sq).nonzero()
+            periodic_ids = wrap_ids_across_periodic_img(ids, mol.num_atoms)
+            edge_index_mol = periodic_ids + N_cnt
             edge_index_mol = edge_index_mol[torch.nonzero(edge_index_mol[:, 0] - edge_index_mol[:, 1])].squeeze(1)
+            boxes.append(box.repeat(edge_index_mol.shape[0], 1)) # repeate box size for each edge
             edge_index = torch.cat((edge_index, edge_index_mol.T), dim=1)
             N_cnt += mol.num_atoms
-
-        return edge_index       
+            
+        return Edges(edge_index, torch.cat(boxes), self.pos)
         
 class DataLoader(torch.utils.data.DataLoader):
     def __init__(

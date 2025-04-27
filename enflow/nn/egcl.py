@@ -1,23 +1,6 @@
 import torch
 from torch import nn
-
-def unsorted_segment_sum(data, segment_ids, num_segments):
-    """Custom PyTorch op to replicate TensorFlow's `unsorted_segment_sum`."""
-    result_shape = (num_segments, data.size(1))
-    result = data.new_full(result_shape, 0)  # Init empty result tensor.
-    segment_ids = segment_ids.unsqueeze(-1).expand(-1, data.size(1))
-    result.scatter_add_(0, segment_ids, data)
-    return result
-
-
-def unsorted_segment_mean(data, segment_ids, num_segments):
-    result_shape = (num_segments, data.size(1))
-    segment_ids = segment_ids.unsqueeze(-1).expand(-1, data.size(1))
-    result = data.new_full(result_shape, 0)  # Init empty result tensor.
-    count = data.new_full(result_shape, 0)
-    result.scatter_add_(0, segment_ids, data)
-    count.scatter_add_(0, segment_ids, torch.ones_like(data))
-    return result / count.clamp(min=1)
+from ..utils.helpers import unsorted_segment_sum, unsorted_segment_mean
     
 class EGCL(nn.Module):
     """Graph Neural Net with global state and fixed number of nodes per graph.
@@ -79,36 +62,32 @@ class EGCL(nn.Module):
             out = out * att_val
         return out
 
-    def node_model(self, x, edge_index, edge_attr):
-        row, col = edge_index
+    def node_model(self, x, row, edge_attr):
         agg = unsorted_segment_sum(edge_attr, row, num_segments=x.size(0))
         agg = torch.cat([x, agg], dim=1)
         out = self.node_nn(agg)
         return out
 
-    def force_model(self, coord, edge_index, coord_diff, edge_feat):
-        row, col = edge_index
+    def force_model(self, coord_diff, row, edge_feat, num_segments):
         trans = coord_diff * self.coord_nn(edge_feat)
-        trans = torch.clamp(trans, min=-100, max=100) #This is never activated but just in case it explosed it may save the train
-        agg = unsorted_segment_mean(trans, row, num_segments=coord.size(0))
+        trans = torch.clamp(trans, min=-100, max=100) #This is never activated but just in case it explodes it may save the train
+        agg = unsorted_segment_mean(trans, row, num_segments=num_segments)
         return agg*self.coords_weight
-
-
-    def coord2radial(self, edge_index, coord):
-        row, col = edge_index
-        coord_diff = coord[row] - coord[col]
+    
+    def forward(self, h, edges):
+        coord_diff = edges.coord_diff
+        
         radial = torch.sum((coord_diff)**2, 1).unsqueeze(1)
 
         if self.norm_diff:
             norm = torch.sqrt(radial) + 1
             coord_diff = coord_diff/(norm)
-
-        return radial, coord_diff
-    
-    def forward(self, h, edge_index, coord):
-        row, col = edge_index
-        radial, coord_diff = self.coord2radial(edge_index, coord)
+        
+        row = edges.row
+        col = edges.col
+            
         edge_attr = self.edge_model(h[row], h[col], radial)
+        
         return self.vel_scaling_nn(h),\
-            self.force_model(coord, edge_index, coord_diff, edge_attr),\
-            self.node_model(h, edge_index, edge_attr)
+            self.force_model(coord_diff, row, edge_attr, h.size(0)),\
+            self.node_model(h, row, edge_attr)
