@@ -83,7 +83,6 @@ class Main:
             checkpoint = torch.load(self.checkpoint_path, weights_only=False)
             node_nf = checkpoint['node_nf']
             self.hidden_nf = checkpoint['hidden_nf']
-            box = checkpoint['box']
             n_iter = checkpoint['n_iter']
             dt = checkpoint['dt']
             r_cut = checkpoint['r_cut']
@@ -117,8 +116,8 @@ class Main:
             dataset_args['node_nf'] = node_nf
             dataset_args['softening'] = softening
             dataset_args['temp'] = lj_to_kelvin(lj_kBT)
-            dataset_args['box'] = [lj_to_dist(i, unit=args['units']['dist']) for i in box.tolist()]
-            dataset_args['n_atoms'] = checkpoint['N']    
+            dataset_args['box'] = [float(i) for i in args['dataset']['box']]
+            dataset_args['n_atoms'] = int(args['dataset']['n_atoms'])
             batch_size = 1
         elif self.mode == 'train':
             batch_size = int(args['training']['batch_size'])
@@ -136,13 +135,10 @@ class Main:
         
         if not checkpoint:
             node_nf = self.dataset.node_nf
-            box_native_units = self.dataset.box + float(args['dynamics']['box_pad'])
-            box = dist_to_lj(box_native_units, unit=args['units']['dist'])
-            if self.world_rank == 0: eprint(f"Using box of size {box_native_units[0]} x {box_native_units[1]} x {box_native_units[2]}")
         
         network=EGCL(node_nf, node_nf, self.hidden_nf)
         integrator_class = getattr(importlib.import_module(f"enflow.flow.dynamics"), f"{self.integrator.upper()}Integrator")
-        self.model = integrator_class(network=network, n_iter=n_iter, dt=dt, r_cut=r_cut, box=box).to(self.local_rank)
+        self.model = integrator_class(network=network, n_iter=n_iter, dt=dt, r_cut=r_cut).to(self.local_rank)
         
         if checkpoint:
             self.model.load_state_dict(checkpoint['model_state_dict'])
@@ -227,12 +223,10 @@ class Main:
                        'hidden_nf': self.hidden_nf,
                        'softening': self.nll.softening,
                        'lj_kBT': self.nll.kBT,
-                       'box': self.model.module.box,
                        'integrator': self.integrator,
                        'n_iter': self.model.module.n_iter,
                        'dt': self.model.module.dt,
-                       'r_cut': self.model.module.r_cut,
-                       'N': self.dataset.num_atoms_per_mol
+                       'r_cut': self.model.module.r_cut
                    }
                 if self.scheduler: to_save['scheduler_state_dict'] = self.scheduler.state_dict()
                 

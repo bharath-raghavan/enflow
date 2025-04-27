@@ -3,14 +3,13 @@ import torch
 import numpy as np
             
 class BaseFlow(torch.nn.Module):
-    def __init__(self, network, n_iter, dt, r_cut, box, dequant_scale=1):
+    def __init__(self, network, n_iter, dt, r_cut, dequant_scale=1):
         super().__init__()
         self.n_iter = n_iter
         self.networks = torch.nn.ModuleList(self.make_networks(network))
         self.dt = dt
         self.dt_2 = 0.5*dt
         self.r_cut = r_cut
-        self.box = box
         self.dequant_scale = dequant_scale
         self.to(torch.double)
     
@@ -28,7 +27,7 @@ class BaseFlow(torch.nn.Module):
         H = self.get_lj_potential(out) + ((out.vel**2).sum() + (out.h**2).sum() + (out.g**2).sum())*0.5
         logZ = - out.num_atoms*( math.log(self.z_lj) - (1.5+out.h.shape[1])*math.log(2*math.pi*self.kBT) )
         log_px = - H/self.kBT + logZ + ldj
-        return -log_px/out.num_mols 
+        return -log_px/out.num_mols
     
     def dequantize(self, z):
         z = z.to(torch.float64)

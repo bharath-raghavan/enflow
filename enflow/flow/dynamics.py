@@ -19,7 +19,7 @@ class LFIntegrator(BaseFlow):
             data.g = data.g + G*self.dt
             
             data.pos = data.pos + data.vel*self.dt
-            data.pbc(self.box)
+            data.pbc()
             data.h = data.h + data.g*self.dt
 
             ldj += Q.sum()
@@ -30,7 +30,7 @@ class LFIntegrator(BaseFlow):
         for network in reversed(self.networks):
             data.h = data.h - data.g*self.dt
             data.pos = data.pos - data.vel*self.dt
-            data.pbc(self.box)
+            data.pbc()
             
             edges = data.get_edges(self.r_cut)
             Q, F, G = network(data.h, edges, data.pos)
@@ -59,7 +59,7 @@ class VVIntegrator(BaseFlow):
             data.g = data.g + G*self.dt_2
             
             data.pos = data.pos + data.vel*self.dt
-            data.pbc(self.box)
+            data.pbc()
             data.h = data.h + data.g*self.dt
             
             edges = data.get_edges(self.r_cut)
@@ -81,7 +81,7 @@ class VVIntegrator(BaseFlow):
             
             data.h = data.h - data.g*self.dt
             data.pos = data.pos - data.vel*self.dt
-            data.pbc(self.box)
+            data.pbc()
             
             edges = data.get_edges(self.r_cut)
             Q, F, G = self.networks[i](data.h, edges, data.pos)

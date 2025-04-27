@@ -73,4 +73,15 @@ class LJDataset(SimulatedDataset):
         custom_nb_force.setNonbondedMethod(mm.CustomNonbondedForce.CutoffPeriodic)
         custom_nb_force.setCutoffDistance(cutoff*sigma)
         
-        return topology, positions, custom_nb_force, "LJ"
+        # Create the system and add the particles, forces to it
+        system = mm.System()
+        system.setDefaultPeriodicBoxVectors(*topology.getPeriodicBoxVectors())
+        for atom in topology.atoms():
+            system.addParticle(atom.element.mass)
+            
+        system.addForce(custom_nb_force)
+        
+        simulation = app.Simulation(topology, system, self.integrator)
+        simulation.context.setPositions(positions)
+        
+        return simulation, "LJ"

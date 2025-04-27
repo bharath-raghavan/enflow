@@ -22,6 +22,7 @@ class ConvertPositionsFrom:
 
     def __call__(self, data):
         data.pos = dist_to_lj(data.pos, self.input_unit)
+        data.box = dist_to_lj(data.box, self.input_unit)
         return data
         
 class ConvertVelocitiesFrom:
@@ -52,7 +53,7 @@ class RandomizeVelocity:
         """ Adapted from: https://github.com/tpogden/quantum-python-lectures/blob/master/11_Monte-Carlo-Maxwell-Boltzmann-Distributions.ipynb """
         
         # Cumulative Distribution function of the Maxwell-Boltzmann speed distribution
-        m = 1
+        m = 1 # TODO: change mass to that of each atom
         a = np.sqrt(self.kBT/m)
         MB_CDF = lambda v : erf(v/(np.sqrt(2)*a)) - np.sqrt(2/np.pi)* v* np.exp(-v**2/(2*a**2))/a
         v = np.arange(0,2500,0.1)
