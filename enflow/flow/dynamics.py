@@ -58,7 +58,6 @@ class VVIntegrator(BaseFlow):
             data.pbc()
             data.h = data.h + data.g*self.dt
             
-            edges = data.get_edges(self.r_cut)
             Q, F, G = self.networks[i](data.h, data.edges)
             scale = 0.5*(torch.exp(Q)-1)
             data.vel = (data.vel + F*self.dt_2)/(1 - scale)
@@ -77,8 +76,7 @@ class VVIntegrator(BaseFlow):
             data.h = data.h - data.g*self.dt
             data.pos = data.pos - data.vel*self.dt
             data.pbc()
-            
-            edges = data.get_edges(self.r_cut)
+
             Q, F, G = self.networks[i](data.h, data.edges)
             
             data.g = data.g - G*self.dt_2
