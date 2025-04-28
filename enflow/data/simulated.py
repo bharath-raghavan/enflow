@@ -1,55 +1,70 @@
 from sys import stdout
 from abc import ABC, abstractmethod
+import numpy as np
 import torch
 from .base import BaseDataset, Data
-from ..utils.helpers import apply_pbc
+from ..utils.helpers import apply_pbc, one_hot
+from ..utils.constants import atom_types
 
 import openmm as mm
 import openmm.app as app
 import openmm.unit as unit
 
-class SimulatedDatasetReporter(object):
-    def __init__(self, node_nf, transform, report_interval, report_from, desc, dist_units, time_units):
+class SimulatedDatasetReporter(BaseDataset):
+    def __init__(self, node_nf_input, r_cut, transform, report_interval, report_from, desc, dist_units, time_units, traj):
         self.data_list = []
         self.transform = transform
-        self.node_nf = node_nf
+        self.node_nf_input = node_nf_input
+        self.r_cut = r_cut
+        self.box_pad = 0
         self.report_interval = report_interval
         self.report_from = report_from
         self.desc = desc
         self.dist_units = dist_units
         self.time_units = time_units
+        self.traj = traj
 
     def describeNextReport(self, simulation):
         steps = self.report_interval - simulation.currentStep%self.report_interval
         return {'steps': steps, 'periodic': False, 'include':['positions', 'velocities']} # OpenMM's PBC application is not great, we will do it ourselves
-
+    
+    def process(self, **input_params):
+        pass
+        
     def report(self, simulation, state):
         if simulation.currentStep < self.report_from: return
         
-        pos = state.getPositions().value_in_unit(self.dist_units)
-        vel = state.getVelocities().value_in_unit(self.dist_units/self.time_units)
-        N = len(pos)
+        pos = torch.tensor(state.getPositions().value_in_unit(self.dist_units), dtype=torch.float64)
+        N = pos.shape[0]
         
         box_vec3 = simulation.topology.getUnitCellDimensions().value_in_unit(self.dist_units)
-        box = torch.tensor([box_vec3[0], box_vec3[1], box_vec3[2]])
+        box = torch.tensor([box_vec3[0], box_vec3[1], box_vec3[2]], dtype=torch.float64)
         
         pos = apply_pbc(pos, box)
         
-        data = Data(
-            z=[a.element.symbol for a in simulation.topology.atoms()]*N,
-            h=torch.normal(0, 1, size=(N, self.node_nf), dtype=torch.float64),
-            g=torch.normal(0, 1, size=(N, self.node_nf), dtype=torch.float64),
-            pos=torch.tensor(pos, dtype=torch.float64),
-            vel=torch.tensor(vel, dtype=torch.float64),
+        # since we changed positions, we need to write the pdb ourselves
+        with open(self.traj, 'a') as pdbfile:
+            app.PDBFile.writeHeader(simulation.topology, pdbfile)
+            pdbfile.write(f"MODEL        {simulation.currentStep}\n")
+            app.PDBFile.writeModel(simulation.topology, pos, pdbfile)
+            pdbfile.write("ENDMDL\n")
+            
+        z = [a.element.symbol for a in simulation.topology.atoms()]
+        
+        if self.node_nf_input:
+            h = torch.normal(0, 1, size=(N, self.node_nf_input), dtype=torch.float64)
+        else:
+            h = None
+        
+        self.append(
+            z=z,
+            h=h,
+            pos=pos,
+            vel=torch.tensor(state.getVelocities().value_in_unit(self.dist_units/self.time_units), dtype=torch.float64),
             N=N,
-            box=box.repeat(N, 1),
+            box=box,
             label=f'Simulated dataset: {self.desc} Frame: {simulation.currentStep}'
         )
-
-        if self.transform:
-            self.data_list.append(self.transform(data))
-        else:
-            self.data_list.append(data)
 
 class SimulatedDataset(BaseDataset, ABC):
     @abstractmethod
@@ -58,7 +73,6 @@ class SimulatedDataset(BaseDataset, ABC):
         
     def process(self, **input_params):
         temp = input_params['temp']
-        node_nf = input_params['node_nf']
         report_interval = input_params['interval']
         report_from = input_params['discard']
         if report_from == -1: report_from = report_interval
@@ -71,9 +85,9 @@ class SimulatedDataset(BaseDataset, ABC):
         friction = input_params['friction']
         
         if dist_units == 'ang':
-            dist_units = unit.angstrom
+            self.dist_units = unit.angstrom
         elif dist_units == 'nm':
-            dist_units = unit.nanometers
+            self.dist_units = unit.nanometers
     
         scale = 1
         if time_units == 'pico':
@@ -81,20 +95,30 @@ class SimulatedDataset(BaseDataset, ABC):
         elif time_units == 'femto':
             time_units = unit.femtoseconds
             scale = 1e-3
-            
+        
+        self.random_h = False
+        
         self.integrator = mm.LangevinMiddleIntegrator(temp*unit.kelvin, friction/(scale*unit.picosecond), dt*scale*unit.picoseconds)
         simulation, desc = self.setup(**input_params)
-
+        
+        print("Running minimization")
+        simulation.minimizeEnergy()
+        
         simulation.context.setVelocitiesToTemperature(temp*unit.kelvin)
         
-        # Add reporters to get data
-        rep = SimulatedDatasetReporter(node_nf, self.transform, report_interval, report_from, desc, dist_units, time_units, input_params['box'])
+        if self.random_h: # set by LJ dataset
+            node_nf_input = input_params['node_nf']
+        else:
+            node_nf_input = None
+        
+        # Add reporters to get data and output traj
+        rep = SimulatedDatasetReporter(node_nf_input, self.r_cut, self.transform, report_interval, report_from, desc, self.dist_units, time_units, traj)
         simulation.reporters.append(rep)
         
-        # Add reporters to output log and traj
-        simulation.reporters.append(app.PDBReporter(traj, report_interval))
+        # Add reporters to output log
         simulation.reporters.append(app.StateDataReporter(log, report_interval, step=True, potentialEnergy=True, temperature=True))
         simulation.reporters.append(app.StateDataReporter(stdout, report_interval, step=True, potentialEnergy=True, temperature=True))
+        
         print("Running MD simulation")
         simulation.step(n_iter)
         self.data_list = rep.data_list # capture data list from rep

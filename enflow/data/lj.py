@@ -31,11 +31,13 @@ def arrange_points_on_grid(n, box, gap):
         
 class LJDataset(SimulatedDataset):       
     def setup(self, **input_params):
+        self.random_h = True
+        
         N = input_params['n_atoms']
         scale = 1
         dist_units = input_params['dist_unit']
         if dist_units == 'ang': scale = 0.1
-        L = np.array(input_params['box'])*scale*unit.nanometers
+        L = (np.array(input_params['box'])*self.dist_unit).in_units_of(unit.nanometers)
         softening = input_params['softening']
         cutoff = input_params.get('cutoff', 3.0)
         gap = input_params.get('gap', 1)*scale

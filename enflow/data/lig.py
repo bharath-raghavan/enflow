@@ -1,30 +1,61 @@
 from .simulated import SimulatedDataset
 
-import openmm
-import openmm.app
-import openmm.unit
+import openmm.app as app
+import openmm.unit as unit
 from openmm.vec3 import Vec3
 from openmmforcefields.generators import SMIRNOFFTemplateGenerator
+
+from openff.units.openmm import to_openmm
+from openff.toolkit import Molecule, ForceField
+from openff.interchange import Interchange
         
 class LIGDataset(SimulatedDataset):       
     def setup(self, **input_params):
-        # TODO: accept inputs
-        # TODO: OpenMM doesn't fix PBC correctly, so enforcePeriodicBox should be False in reporter and correct by hand
-        # TODO: make sure that molecule is not broken in the box when doing that
+        smiles = input_params['smiles']
+        if 'name' in input_params:
+            lig_name = input_params['name']
+        else:
+            lig_name = 'ligand'
+        
+        ff = input_params['force_field']
+        if 'n_conformers' in input_params:
+            n_conformers = int(input_params['n_conformers'])
+        else:
+            n_conformers = 1
+        
+        if 'padding' in input_params:
+            padding = float(input_params['padding'])
+            box = None
+        elif 'box' in input_params:
+            box =  float(input_params['box'])
+            padding = None
+        else:
+            print('error')
+        
         molecule = Molecule.from_smiles(smiles)
+        for atom in molecule.atoms:
+            atom.metadata["residue_name"] = lig_name.upper()[:3]
+            
         topology = molecule.to_topology().to_openmm()
 
         smirnoff = SMIRNOFFTemplateGenerator(molecules=molecule)
-        ff = openmm.app.ForceField('amber/protein.ff14SB.xml', 'amber/tip3p_standard.xml', 'amber/tip3p_HFE_multivalent.xml')
+        ff = app.ForceField(*ff) # 
         ff.registerTemplateGenerator(smirnoff.generator)
 
-        molecule.generate_conformers(n_conformers=5)
-        positions = to_openmm(molecule.conformers[0])
+        molecule.generate_conformers(n_conformers=n_conformers)
+        positions = to_openmm(molecule.conformers[0]) # read more conformers
 
-        modeller = openmm.app.Modeller(topology, positions)
-        modeller.addSolvent(ff, boxSize=Vec3(3.0, 3.0, 3.0)*openmm.unit.nanometers)
-
-        system = ff.createSystem(modeller.topology, nonbondedMethod=openmm.app.PME,
-                nonbondedCutoff=1*openmm.unit.nanometer, constraints=openmm.app.HBonds)
+        modeller = app.Modeller(topology, positions)
         
-        return openmm.app.Simulation(modeller.topology, system, self.integrator), smiles
+        if padding:
+            modeller.addSolvent(ff, padding=padding*self.dist_units)
+        else:
+            modeller.addSolvent(ff, boxSize=Vec3(*box)*self.dist_units)
+            
+        system = ff.createSystem(modeller.topology, nonbondedMethod=app.PME,
+                nonbondedCutoff=1*unit.nanometer, constraints=app.HBonds)
+        
+        simulation = app.Simulation(modeller.topology, system, self.integrator)
+        simulation.context.setPositions(modeller.positions)
+        
+        return simulation, f'Solvated {lig_name} ({smiles})'

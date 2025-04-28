@@ -98,12 +98,13 @@ class Main:
         
         dataset_type = args['dataset']['type']
         dataset_class = getattr(importlib.import_module(f"enflow.data.{dataset_type}"), f"{dataset_type.upper()}Dataset")
-        dataset_args = {i:args['dataset'][i] for i in args['dataset'] if (i!='temp' and i!='batch_size' and i!='type')}
+        dataset_args = {i:args['dataset'][i] for i in args['dataset'] if (i!='batch_size' and i!='type')}
         
         T = [transforms.ConvertPositionsFrom(args['units']['dist']), transforms.Center()]
         
-        if 'temp' in args['dataset']:
-            T.append(transforms.RandomizeVelocity(kelvin_to_lj(float(args['dataset']['temp']))))
+        if 'randomize_vel' in args['dataset'] and args['dataset']['randomize_vel']:
+                T.append(transforms.RandomizeVelocity(kelvin_to_lj(float(args['dataset']['temp']))))
+                dataset_args.pop('temp')
         else:
             T.append(transforms.ConvertVelocitiesFrom(args['units']['dist'], args['units']['time']))
         
