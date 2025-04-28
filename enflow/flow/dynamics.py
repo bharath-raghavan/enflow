@@ -48,8 +48,7 @@ class VVIntegrator(BaseFlow):
         ldj = 0
         data.h = self.dequantize(data.h)
         
-        edges = data.get_edges(self.r_cut)
-        Q, F, G = self.networks[0](data.h, edges, data.pos)
+        Q, F, G = self.networks[0](data.h, data.edges)
         for i in range(1,self.n_iter+1):
             scale = 0.5*(1+torch.exp(Q))
             data.vel = scale*data.vel + F*self.dt_2
@@ -60,7 +59,7 @@ class VVIntegrator(BaseFlow):
             data.h = data.h + data.g*self.dt
             
             edges = data.get_edges(self.r_cut)
-            Q, F, G = self.networks[i](data.h, edges, data.pos)
+            Q, F, G = self.networks[i](data.h, data.edges)
             scale = 0.5*(torch.exp(Q)-1)
             data.vel = (data.vel + F*self.dt_2)/(1 - scale)
             data.g = data.g + G*self.dt_2
@@ -69,8 +68,7 @@ class VVIntegrator(BaseFlow):
         return data, ldj.sum()
 
     def reverse(self, data):
-        edges = data.get_edges(self.r_cut)
-        Q, F, G = self.networks[self.n_iter](data.h, edges, data.pos)
+        Q, F, G = self.networks[self.n_iter](data.h, data.edges)
         for i in reversed(range(0,self.n_iter)):
             data.g = data.g - G*self.dt_2
             scale = 0.5*(torch.exp(Q)-1)
@@ -81,7 +79,7 @@ class VVIntegrator(BaseFlow):
             data.pbc()
             
             edges = data.get_edges(self.r_cut)
-            Q, F, G = self.networks[i](data.h, edges, data.pos)
+            Q, F, G = self.networks[i](data.h, data.edges)
             
             data.g = data.g - G*self.dt_2
             scale = 0.5*(1+torch.exp(Q))
