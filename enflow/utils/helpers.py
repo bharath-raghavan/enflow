@@ -11,6 +11,9 @@ ELEMENTS = { 1:'H' ,                                                            
                                           90:'Th',  91:'Pa',  92:'U' ,  93:'Np',  94:'Pu',  95:'Am',  96:'Cm',  97:'Bk',  98:'Cf',  99:'Es', 100:'Fm', 101:'Md', 102:'No', 103:'Lr'
 }
 
+def apply_pbc(pos, box):
+    return pos - (pos/box).round()*box
+
 def get_box_len(pos):
     min_ = torch.min(pos, dim=0)[0]
     max_ = torch.max(pos, dim=0)[0]

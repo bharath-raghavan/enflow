@@ -2,13 +2,14 @@ from sys import stdout
 from abc import ABC, abstractmethod
 import torch
 from .base import BaseDataset, Data
+from ..utils.helpers import apply_pbc
 
 import openmm as mm
 import openmm.app as app
 import openmm.unit as unit
 
 class SimulatedDatasetReporter(object):
-    def __init__(self, node_nf, transform, report_interval, report_from, desc, dist_units, time_units, box):
+    def __init__(self, node_nf, transform, report_interval, report_from, desc, dist_units, time_units):
         self.data_list = []
         self.transform = transform
         self.node_nf = node_nf
@@ -17,11 +18,10 @@ class SimulatedDatasetReporter(object):
         self.desc = desc
         self.dist_units = dist_units
         self.time_units = time_units
-        self.box = torch.tensor(box)
 
     def describeNextReport(self, simulation):
         steps = self.report_interval - simulation.currentStep%self.report_interval
-        return {'steps': steps, 'periodic': None, 'include':['positions', 'velocities']}
+        return {'steps': steps, 'periodic': False, 'include':['positions', 'velocities']} # OpenMM's PBC application is not great, we will do it ourselves
 
     def report(self, simulation, state):
         if simulation.currentStep < self.report_from: return
@@ -30,14 +30,19 @@ class SimulatedDatasetReporter(object):
         vel = state.getVelocities().value_in_unit(self.dist_units/self.time_units)
         N = len(pos)
         
+        box_vec3 = simulation.topology.getUnitCellDimensions().value_in_unit(self.dist_units)
+        box = torch.tensor([box_vec3[0], box_vec3[1], box_vec3[2]])
+        
+        pos = apply_pbc(pos, box)
+        
         data = Data(
-            z=['Ar']*N,
+            z=[a.element.symbol for a in simulation.topology.atoms()]*N,
             h=torch.normal(0, 1, size=(N, self.node_nf), dtype=torch.float64),
             g=torch.normal(0, 1, size=(N, self.node_nf), dtype=torch.float64),
             pos=torch.tensor(pos, dtype=torch.float64),
             vel=torch.tensor(vel, dtype=torch.float64),
             N=N,
-            box=self.box.repeat(N, 1),
+            box=box.repeat(N, 1),
             label=f'Simulated dataset: {self.desc} Frame: {simulation.currentStep}'
         )
 
