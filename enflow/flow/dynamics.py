@@ -12,8 +12,7 @@ class LFIntegrator(BaseFlow):
 
         data.h = self.dequantize(data.h)
         for network in self.networks:
-            edges = data.get_edges(self.r_cut)
-            Q, F, G = network(data.h, edges)
+            Q, F, G = network(data.h, data.edges)
             data.vel = torch.exp(Q) * data.vel + F*self.dt
             data.g = data.g + G*self.dt
             
@@ -31,8 +30,7 @@ class LFIntegrator(BaseFlow):
             data.pos = data.pos - data.vel*self.dt
             data.pbc()
             
-            edges = data.get_edges(self.r_cut)
-            Q, F, G = network(data.h, edges, data.pos)
+            Q, F, G = network(data.h, data.edges)
             data.g = data.g - G*self.dt
             data.vel = (data.vel - F*self.dt)/torch.exp(Q)
             

@@ -85,7 +85,6 @@ class Main:
             self.hidden_nf = checkpoint['hidden_nf']
             n_iter = checkpoint['n_iter']
             dt = checkpoint['dt']
-            r_cut = checkpoint['r_cut']
             self.integrator = checkpoint['integrator']
             lj_kBT = checkpoint['lj_kBT']
             softening = checkpoint['softening']
@@ -93,7 +92,6 @@ class Main:
             self.hidden_nf = int(args['dynamics']['network']['hidden_nf'])
             n_iter = int(args['dynamics']['n_iter'])
             dt = time_to_lj(float(args['dynamics']['dt']), unit=args['units']['time'])
-            r_cut = dist_to_lj(float(args['dynamics']['r_cut']), unit=args['units']['dist'])
             self.integrator = args['dynamics']['integrator'].lower()
             lj_kBT = kelvin_to_lj(float(args['training']['loss']['temp']))
             softening = float(args['training']['loss']['softening'])
@@ -138,7 +136,7 @@ class Main:
         
         network=EGCL(node_nf, node_nf, self.hidden_nf)
         integrator_class = getattr(importlib.import_module(f"enflow.flow.dynamics"), f"{self.integrator.upper()}Integrator")
-        self.model = integrator_class(network=network, n_iter=n_iter, dt=dt, r_cut=r_cut).to(self.local_rank)
+        self.model = integrator_class(network=network, n_iter=n_iter, dt=dt).to(self.local_rank)
         
         if checkpoint:
             self.model.load_state_dict(checkpoint['model_state_dict'])
@@ -225,8 +223,7 @@ class Main:
                        'lj_kBT': self.nll.kBT,
                        'integrator': self.integrator,
                        'n_iter': self.model.module.n_iter,
-                       'dt': self.model.module.dt,
-                       'r_cut': self.model.module.r_cut
+                       'dt': self.model.module.dt
                    }
                 if self.scheduler: to_save['scheduler_state_dict'] = self.scheduler.state_dict()
                 

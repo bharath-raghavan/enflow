@@ -1,7 +1,7 @@
 import os
 from abc import ABC, abstractmethod
 import torch
-from ..utils.helpers import get_box_len, get_periodic_images, wrap_ids_across_periodic_img
+from ..utils.helpers import apply_pbc, get_box_len, get_periodic_images, wrap_ids_across_periodic_img
 
 class Edges: # edge class to handle coord_diff over periodic box
     def __init__(self, edge_index, box, coord):
@@ -16,13 +16,14 @@ class Edges: # edge class to handle coord_diff over periodic box
         return coord_diff
 
 class Data:
-    def __init__(self, z=None, h=None, g=None, pos=None, vel=None, N=None, box=None, label=None, device='cpu'):
+    def __init__(self, z=None, h=None, g=None, pos=None, vel=None, N=None, r_cut=None, box=None, label=None, device='cpu'):
         self.z = z
         self.h = h
         self.g = g
         self.pos = pos
         self.vel = vel
         self.N = N
+        self.r_cut = r_cut
         self.box = box
         self.label = label
         self.device = device
@@ -39,6 +40,7 @@ class Data:
                 pos=self.pos[start_id:end_id,:],
                 vel=self.vel[start_id:end_id,:],
                 N=self.N[i],
+                r_cut=self.r_cut[i],
                 box=self.box[start_id:end_id,:],
                 label=self.label[start_id:end_id],
                 device=self.device
@@ -73,6 +75,7 @@ class Data:
         pos = self.pos.to(device)
         vel = self.vel.to(device)
         N = self.N.to(device)
+        r_cut = self.r_cut.to(device)
         box = self.box.to(device)
         
         return Data(
@@ -82,6 +85,7 @@ class Data:
                 pos=pos,
                 vel=vel,
                 N=N,
+                r_cut=r_cut,
                 box=box,
                 label=self.label,
                 device=device
@@ -89,17 +93,19 @@ class Data:
     
     def pbc(self):
         self.pos = self.pos - (self.pos/self.box).round()*self.box # element by element operations b/w pos and box
-            
-    def get_edges(self, r_cut):
+    
+    @property        
+    def edges(self):
         # get neighbour list
-        r_sq = r_cut*r_cut
-
+        
         edge_index = torch.empty((2, 0), dtype=torch.int, device=self.device)
         boxes = []
         N_cnt = 0
         for mol in self:
             box = mol.box[0] # assume that each atom in mol has same box lens (should be true), so use only first one
             pos_all_periodic_images = get_periodic_images(mol.pos, box) # replicate positions 27 times
+            
+            r_sq = mol.r_cut*mol.r_cut
             
             dist_sq = (pos_all_periodic_images.unsqueeze(1) - mol.pos).pow(2).sum(dim=2) # calculating diff with all (27) images takes time, TODO: find way to reduce time
             ids = (dist_sq < r_sq).nonzero()
@@ -138,6 +144,7 @@ class DataLoader(torch.utils.data.DataLoader):
                 pos=torch.cat([d.pos for d in dataset]),
                 vel=torch.cat([d.vel for d in dataset]),
                 N=torch.tensor([d.N for d in dataset]),
+                r_cut=torch.tensor([d.r_cut for d in dataset]),
                 box=torch.cat([d.box for d in dataset]),
                 label=[d.label for d in dataset]
             )
@@ -156,6 +163,12 @@ class BaseDataset(torch.utils.data.Dataset, ABC):
             input_params.pop('box_pad')
         else:
             self.box_pad = 0
+        
+        if 'r_cut' in input_params:
+            self.r_cut = float(input_params['r_cut'])
+            input_params.pop('r_cut')
+        else:
+            self.r_cut = None
         
         self.data_list = []
         
@@ -191,6 +204,9 @@ class BaseDataset(torch.utils.data.Dataset, ABC):
         else:
             box += self.box_pad
         
+        if self.r_cut is None:
+            print("error rcut")
+        
         data = Data(
             z=z,
             h=h,
@@ -198,6 +214,7 @@ class BaseDataset(torch.utils.data.Dataset, ABC):
             pos=pos,
             vel=vel,
             N=N,
+            r_cut=self.r_cut,
             box=box.repeat(N, 1), # tile box len to be same size as pos
             label=label
         )
