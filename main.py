@@ -203,7 +203,7 @@ class Main:
                 data = data.to(self.local_rank)
                 self.optimizer.zero_grad()
                 out, ldj = self.model(data)
-                loss = self.nll(data, ldj)
+                loss = self.nll(out, ldj)
                 loss.backward()
                 self.optimizer.step()
                 if self.scheduler: self.scheduler.step()
