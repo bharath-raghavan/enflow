@@ -44,7 +44,19 @@ def lj_to_kelvin(kBT):
 def lj_to_meter(x_):
     return x_*sigma
     
+def lj_to_meter_per_sec(x):
+    return x*math.sqrt(eps/M)
+    
 def lj_to_dist(x_, unit='ang'):
     if unit == 'ang': a = 1e-10
     elif unit == 'nm': a = 1e-9
     return lj_to_meter(x_/a)
+    
+def lj_to_vel(x_, unit1='ang', unit2='pico'):
+    if unit1 == 'ang': a = 1e-10
+    elif unit1 == 'nm': a = 1e-9
+    if unit2 == 'pico':
+        b = 1e-12
+    elif unit2 == 'femto':
+        b = 1e-12
+    return lj_to_meter_per_sec(x_*b/a)
