@@ -62,6 +62,24 @@ class Main:
             self.world_rank = 0
             self.local_rank = 'cpu'
     
+    def _setup_dataset(self, dataset_label, args):
+        dataset_type = args[dataset_label]['type']
+        dataset_class = getattr(importlib.import_module(f"enflow.data.{dataset_type}"), f"{dataset_type.upper()}Dataset")
+        dataset_args = {i:args[dataset_label][i] for i in args[dataset_label] if (i!='batch_size' and i!='type')}
+        
+        dataset_args['dist_unit'] = args['units']['dist']
+        dataset_args['time_unit'] = args['units']['time']
+        
+        T = [transforms.ConvertPositionsFrom(args['units']['dist']), transforms.Center()]
+
+        if 'randomize_vel' in dataset_args and dataset_args['randomize_vel']:
+                T.append(transforms.RandomizeVelocity(kelvin_to_lj(float(dataset_args['temp']))))
+                dataset_args.pop('temp')
+        else:
+            T.append(transforms.ConvertVelocitiesFrom(args['units']['dist'], args['units']['time']))
+
+        return dataset_class(**dataset_args, transform=transforms.Compose(T))
+    
     def setup(self, input):
         self.start_epoch = 0
         checkpoint = None
@@ -96,32 +114,25 @@ class Main:
             lj_kBT = kelvin_to_lj(float(args['training']['loss']['temp']))
             softening = float(args['training']['loss']['softening'])
         
-        dataset_type = args['dataset']['type']
-        dataset_class = getattr(importlib.import_module(f"enflow.data.{dataset_type}"), f"{dataset_type.upper()}Dataset")
-        dataset_args = {i:args['dataset'][i] for i in args['dataset'] if (i!='batch_size' and i!='type')}
-        
-        T = [transforms.ConvertPositionsFrom(args['units']['dist']), transforms.Center()]
-        
-        if 'randomize_vel' in args['dataset'] and args['dataset']['randomize_vel']:
-                T.append(transforms.RandomizeVelocity(kelvin_to_lj(float(args['dataset']['temp']))))
-                dataset_args.pop('temp')
-        else:
-            T.append(transforms.ConvertVelocitiesFrom(args['units']['dist'], args['units']['time']))
-        
-        dataset_args['dist_unit'] = args['units']['dist']
-        dataset_args['time_unit'] = args['units']['time']
-        
         if self.mode == 'gen':
-            dataset_args['node_nf'] = node_nf
-            dataset_args['softening'] = softening
-            dataset_args['temp'] = lj_to_kelvin(lj_kBT)
-            dataset_args['box'] = [float(i) for i in args['dataset']['box']]
-            dataset_args['n_atoms'] = int(args['dataset']['n_atoms'])
+            args['dataset']['node_nf'] = node_nf
+            args['dataset']['softening'] = softening
+            args['dataset']['temp'] = lj_to_kelvin(lj_kBT)
+            args['dataset']['box'] = [float(i) for i in args['dataset']['box']]
+            args['dataset']['n_atoms'] = int(args['dataset']['n_atoms'])
             batch_size = 1
         elif self.mode == 'train':
             batch_size = int(args['training']['batch_size'])
         
-        self.dataset = dataset_class(**dataset_args, transform=transforms.Compose(T))
+        if args['dataset']['type'] == 'compose':
+            n_dataset = args['dataset']['number']
+            datasets = []
+            for i in range(n_dataset):
+                datasets.append(self._setup_dataset(f'dataset{i+1}', args))
+            from enflow.data.base import ComposeDatasets
+            self.dataset = ComposeDatasets(datasets)
+        else:
+            self.dataset = self._setup_dataset('dataset', args)
         
         if self.mode == 'data':
             return
@@ -265,8 +276,3 @@ class Main:
             self.generate()
         
         if self.ddp: dist.destroy_process_group()
-
-        
-if __name__ == "__main__":
-    main_hndl = Main(world_size=os.environ.get('SLURM_NTASKS'), world_rank=os.environ.get('SLURM_PROCID'), local_rank=os.environ.get('SLURM_LOCALID'), num_cpus_per_task=os.environ.get("SLURM_CPUS_PER_TASK"))
-    main_hndl(sys.argv[1]) 

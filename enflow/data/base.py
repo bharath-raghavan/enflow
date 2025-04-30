@@ -1,5 +1,6 @@
 import os
 from abc import ABC, abstractmethod
+import numpy as np
 import torch
 from ..utils.helpers import apply_pbc, get_box_len, get_periodic_images, wrap_ids_across_periodic_img, one_hot
 from ..utils.constants import atom_types
@@ -232,3 +233,16 @@ class BaseDataset(torch.utils.data.Dataset, ABC):
     @abstractmethod
     def process(self, **input_params):
         pass
+
+class ComposeDatasets(BaseDataset):
+    def __init__(self, datasets):
+        self.data_list = []
+        
+        for i in datasets:
+            if self.data_list != []:
+                if self.node_nf != i.node_nf:
+                    print("error")
+            self.data_list += i.data_list
+        
+    def process(self, **input_params):
+        raise NotImplementedError
