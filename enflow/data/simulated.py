@@ -1,17 +1,19 @@
 from sys import stdout
 from abc import ABC, abstractmethod
+import math
 import numpy as np
 import torch
 from .base import BaseDataset, Data
 from ..utils.helpers import apply_pbc, one_hot
 from ..utils.constants import atom_types
+from ..utils.conversion import kelvin_to_lj
 
 import openmm as mm
 import openmm.app as app
 import openmm.unit as unit
 
 class SimulatedDatasetReporter(BaseDataset):
-    def __init__(self, node_nf_input, r_cut, transform, report_interval, report_from, desc, dist_units, time_units, traj):
+    def __init__(self, node_nf_input, r_cut, transform, report_interval, report_from, desc, dist_units, time_units, traj, temp):
         self.data_list = []
         self.transform = transform
         self.node_nf_input = node_nf_input
@@ -23,6 +25,7 @@ class SimulatedDatasetReporter(BaseDataset):
         self.dist_units = dist_units
         self.time_units = time_units
         self.traj = traj
+        self.kBT = kelvin_to_lj(temp)
 
     def describeNextReport(self, simulation):
         steps = self.report_interval - simulation.currentStep%self.report_interval
@@ -52,7 +55,7 @@ class SimulatedDatasetReporter(BaseDataset):
         z = [a.element.symbol for a in simulation.topology.atoms()]
         
         if self.node_nf_input:
-            h = torch.normal(0, 1, size=(N, self.node_nf_input), dtype=torch.float64)
+            h = torch.normal(0, 1/math.sqrt(self.kBT), size=(N, self.node_nf_input), dtype=torch.float64)
         else:
             h = None
         
@@ -112,7 +115,7 @@ class SimulatedDataset(BaseDataset, ABC):
             node_nf_input = None
         
         # Add reporters to get data and output traj
-        rep = SimulatedDatasetReporter(node_nf_input, self.r_cut, self.transform, report_interval, report_from, desc, self.dist_units, time_units, traj)
+        rep = SimulatedDatasetReporter(node_nf_input, self.r_cut, self.transform, report_interval, report_from, desc, self.dist_units, time_units, traj, temp)
         simulation.reporters.append(rep)
         
         # Add reporters to output log
