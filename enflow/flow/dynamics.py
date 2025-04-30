@@ -49,6 +49,7 @@ class VVIntegrator(BaseFlow):
         data.h = self.dequantize(data.h)
         
         Q, F, G = self.networks[0](data.h, data.edges)
+        ldj += Q
         for i in range(1,self.n_iter+1):
             scale = 0.5*(1+torch.exp(Q))
             data.vel = scale*data.vel + F*self.dt_2
