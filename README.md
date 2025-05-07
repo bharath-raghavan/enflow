@@ -189,4 +189,3 @@ alchemist-nn:<br/>
 ---> flow: The normalizing flow, integrator and loss<br/>
 ---> nn: The different networks (currrently only EGCL implemented)<br/>
 ---> utils: All helpes functions, esp. unit conversions<br/>
-
