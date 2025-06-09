@@ -18,7 +18,6 @@ package, use:
 
     % alchemist dynamics example/lj.yaml 1000 lj.db
 
-
 This will arrange `natoms` Argon atoms in a box of constant volume (determined by the given density). Then run NVT MD for 10\*100 steps at 120K with the friction and dt as given. The `cutoff` is used while running the MD (it is a multiple of `sigma`). It will print out (both to `stdout` and the log file) the temperature and energy every 100 steps. Starting from the iteration specified in discard, it will write the trajectory to an ASE database.
 
 <!-- PDB file (specified in `traj`) and to `processed_file` (this will be used to load the dataset for training/generation). Here the `discard` is -1, so it will store only the last frame of the simulation. The `r_cut` is used to calculate the neighbor list during the NN training. -->
