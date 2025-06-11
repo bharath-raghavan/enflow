@@ -91,3 +91,4 @@ class EGCL(nn.Module):
         return self.vel_scaling_nn(h),\
             self.force_model(coord_diff, row, edge_attr, h.size(0)),\
             self.node_model(h, row, edge_attr)
+            

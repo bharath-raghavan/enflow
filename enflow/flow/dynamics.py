@@ -8,9 +8,7 @@ class LFIntegrator(BaseFlow):
         return networks
 
     def forward(self, data):
-        ldj = 0
-
-        data.h = self.dequantize(data.h)
+        data.h, ldj = self.dequantize(data.h)
         for network in self.networks:
             Q, F, G = network(data.h, data.edges)
             data.vel = torch.exp(Q) * data.vel + F*self.dt
@@ -34,8 +32,8 @@ class LFIntegrator(BaseFlow):
             data.g = data.g - G*self.dt
             data.vel = (data.vel - F*self.dt)/torch.exp(Q)
             
-        data.h = self.quantize(data.h)
-
+        data.h = self.dequantize.reverse(data.h)
+        
         return data
         
 class VVIntegrator(BaseFlow):
