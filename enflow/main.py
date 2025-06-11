@@ -10,6 +10,7 @@ import torch
 
 from enflow.flow.loss import Alchemical_NLL
 from enflow.nn.egcl import EGCL
+from enflow.nn.argmax import ArgMax
 from enflow.data.sdf import SDFDataset
 from enflow.data.base import DataLoader
 from enflow.data import transforms
@@ -101,14 +102,14 @@ class Main:
             checkpoint = torch.load(self.checkpoint_path, weights_only=False)
             node_nf = checkpoint['node_nf']
             self.hidden_nf = checkpoint['hidden_nf']
-            n_iter = checkpoint['n_iter']
+            self.n_iter = checkpoint['n_iter']
             dt = checkpoint['dt']
             self.integrator = checkpoint['integrator']
             lj_kBT = checkpoint['lj_kBT']
             softening = checkpoint['softening']
         elif self.mode != 'data':
             self.hidden_nf = int(args['dynamics']['network']['hidden_nf'])
-            n_iter = int(args['dynamics']['n_iter'])
+            self.n_iter = int(args['dynamics']['n_iter'])
             dt = time_to_lj(float(args['dynamics']['dt']), unit=args['units']['time'])
             self.integrator = args['dynamics']['integrator'].lower()
             lj_kBT = kelvin_to_lj(float(args['training']['loss']['temp']))
@@ -138,17 +139,18 @@ class Main:
             return
         
         if self.ddp:
-            self.sampler = DistributedSampler(self.dataset, num_replicas=self.world_size, rank=self.world_rank, shuffle=False)
+            self.sampler = DistributedSampler(self.dataset, num_replicas=self.world_size, rank=self.world_rank, shuffle=True)
             self.train_loader = DataLoader(self.dataset, batch_size=batch_size, num_workers=self.num_cpus_per_task, pin_memory=True, shuffle=False, sampler=self.sampler, drop_last=False)
         else:
-            self.train_loader = DataLoader(self.dataset, batch_size=batch_size, shuffle=False)
+            self.train_loader = DataLoader(self.dataset, batch_size=batch_size, shuffle=True)
         
         if not checkpoint:
             node_nf = self.dataset.node_nf
         
-        network=EGCL(node_nf, node_nf, self.hidden_nf)
+        networks = []
+        for i in range(self.n_iter): networks.append(EGCL(node_nf, node_nf, self.hidden_nf))
         integrator_class = getattr(importlib.import_module(f"enflow.flow.dynamics"), f"{self.integrator.upper()}Integrator")
-        self.model = integrator_class(network=network, n_iter=n_iter, dt=dt).to(self.local_rank)
+        self.model = integrator_class(networks, ArgMax(node_nf, self.hidden_nf), dt=dt).to(self.local_rank)
         
         if checkpoint:
             self.model.load_state_dict(checkpoint['model_state_dict'])
@@ -185,6 +187,7 @@ class Main:
         if scheduler_step != 0 and gamma != 0:
             self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=scheduler_step, gamma=gamma)
         
+        if self.world_rank == 0: eprint(f"Loss function parameters: softening={softening}, kBT={lj_kBT}", flush=True)
         self.nll = Alchemical_NLL(kBT=lj_kBT, softening=softening)
 
         if checkpoint:
@@ -193,7 +196,7 @@ class Main:
 
     def train(self):
         if self.world_rank == 0:
-            print('Epoch \tTraining Loss \t   TGPU (s)', flush=True)
+            print('Epoch \tTraining Loss \t   Time (s)', flush=True)
 
         for epoch in range(self.start_epoch, self.start_epoch+self.num_epochs):
             losses = []
@@ -209,7 +212,7 @@ class Main:
             for i, data in enumerate(self.train_loader):
                 if self.world_rank == 0:
                     eprint(f'*** Batch Number {i} out of {len(self.train_loader)} batches ***', flush=True)
-                    eprint('GPU \tTraining Loss', flush=True)
+                    eprint('GPU \tTraining Loss\t Learning Rate', flush=True)
             
                 data = data.to(self.local_rank)
                 self.optimizer.zero_grad()
@@ -218,12 +221,17 @@ class Main:
                 loss.backward()
                 self.optimizer.step()
                 if self.scheduler: self.scheduler.step()
-                losses.append(loss.item())
+                losses.append(loss)
         
                 eprint('%.5i \t    %.2f' % (self.world_rank, loss.item()), flush=True)
-
-            epoch_loss = np.mean(losses)
-    
+            
+            losses = torch.tensor(losses, device=self.local_rank)
+            epoch_loss = torch.mean(losses)
+            if self.ddp:
+                eprint('Epoch loss on rank %.5i :    %.2f' % (self.world_rank,  epoch_loss.item()), flush=True)
+                dist.all_reduce(epoch_loss, op=dist.ReduceOp.SUM)
+                epoch_loss /= self.world_size
+            
             if self.world_rank == 0:
                 to_save = {
                        'epoch': epoch,
@@ -234,7 +242,7 @@ class Main:
                        'softening': self.nll.softening,
                        'lj_kBT': self.nll.kBT,
                        'integrator': self.integrator,
-                       'n_iter': self.model.module.n_iter,
+                       'n_iter': self.n_iter,
                        'dt': self.model.module.dt
                    }
                 if self.scheduler: to_save['scheduler_state_dict'] = self.scheduler.state_dict()
@@ -244,10 +252,11 @@ class Main:
                 eprint("State saved", flush=True)
         
                 eprint(f"###### Ending epoch {epoch} ###### ")
-        
+                
                 if self.ddp: torch.cuda.synchronize()
                 end_time = time.time()
-                if epoch % self.log_interval == 0: print('%.5i \t    %.2f \t    %.2f' % (epoch, epoch_loss, end_time - start_time), flush=True)
+                
+                if epoch % self.log_interval == 0: print('%.5i \t    %.2f \t    %.2f \t    %.2e' % (epoch, epoch_loss.item(), end_time - start_time, self.optimizer.param_groups[0]['lr']), flush=True)
     
             if self.ddp: dist.barrier()
     
@@ -266,6 +275,7 @@ class Main:
         data_, _ = self.model(out)
 
         print(torch.allclose(data_.pos, data.pos, atol=1e-8))
+        print(torch.allclose(data_.h, data.h, atol=1e-8))
        
     def __call__(self, input):
         self.setup(input)
