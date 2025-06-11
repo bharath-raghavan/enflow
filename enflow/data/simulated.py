@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 import math
 import numpy as np
 import torch
-from .base import BaseDataset, Data
+from .base import InMemoryBaseDataset, Data
 from ..utils.helpers import apply_pbc, one_hot
 from ..utils.constants import atom_types
 from ..utils.conversion import kelvin_to_lj
@@ -12,7 +12,7 @@ import openmm as mm
 import openmm.app as app
 import openmm.unit as unit
 
-class SimulatedDatasetReporter(BaseDataset):
+class SimulatedDatasetReporter:
     def __init__(self, node_nf_input, r_cut, transform, report_interval, report_from, desc, dist_units, time_units, traj, temp):
         self.data_list = []
         self.transform = transform
@@ -56,20 +56,26 @@ class SimulatedDatasetReporter(BaseDataset):
         
         if self.node_nf_input:
             h = torch.normal(0, 1/math.sqrt(self.kBT), size=(N, self.node_nf_input), dtype=torch.float64)
+            g = torch.normal(0, 1/math.sqrt(self.kBT), size=(N, self.node_nf_input), dtype=torch.float64)
         else:
             h = None
+            g = None
         
-        self.append(
+        data = Data(
             z=z,
             h=h,
+            g=g,
             pos=pos,
             vel=torch.tensor(state.getVelocities().value_in_unit(self.dist_units/self.time_units), dtype=torch.float64),
             N=N,
-            box=box,
+            box=box.repeat(N, 1),
+            r_cut=self.r_cut,
             label=f'Simulated dataset: {self.desc} Frame: {simulation.currentStep}'
-        )
+            )
+        
+        self.data_list.append(self.transform(data))
 
-class SimulatedDataset(BaseDataset, ABC):
+class SimulatedDataset(InMemoryBaseDataset, ABC):
     @abstractmethod
     def setup(self, **input_params):
         pass

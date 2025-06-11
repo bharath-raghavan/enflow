@@ -1,38 +1,41 @@
 import torch
-from .base import BaseDataset, Data
+from .base import BaseDataset, InMemoryBaseDataset, Data
 import MDAnalysis
-from tqdm import tqdm
-from ..utils.constants import atom_types
+from MDAnalysis.lib.log import ProgressBar
+from ..utils.helpers import get_element
 
-class MDDataset(BaseDataset):
+class LargeMDDataset(BaseDataset):
+       
+    def __len__(self):
+        u = MDAnalysis.Universe(self.input_params['top_file'], self.input_params['traj_file'])
+        return len(u.trajectory)
     
-    def process_traj(self, u, traj, dist_scale, time_scale):
-        for frame, ts in enumerate(u.trajectory):
-            z = [get_element(a.element, a.mass) for a in u.atoms]
-            
-            self.append(
-                z=z,
-                pos=torch.tensor(u.atoms.positions*dist_scale, dtype=torch.float64),
-                vel=torch.tensor(u.atoms.velocities*dist_scale/time_scale, dtype=torch.float64),
-                N=len(u.atoms),
-                label=traj + ' frame: ' + str(frame)
-            )
-    
-    def process(self, **input_params):
-        
-        dist_units = input_params['dist_unit']
-        time_units = input_params['time_unit']
-        
-        if dist_units == 'ang':
-            dist_scale = 1
-        elif dist_units == 'nm':
-            dist_scale = 0.1
-            
-        if time_units == 'pico':
-            time_scale = 1
-        elif time_units == 'femto':
-            time_scale = 1e-3
-        
-        for top, traj in tqdm(zip(input_params['top_file'], input_params['traj_file'])):
+    def process(self, idx):
+        u = MDAnalysis.Universe(self.input_params['top_file'], self.input_params['traj_file'])
+        u.trajectory[idx]
+        z = [get_element(a.element, a.mass) for a in u.atoms]
+
+        return (
+            z,
+            torch.tensor(u.atoms.positions, dtype=torch.float64),
+            torch.tensor(u.atoms.velocities, dtype=torch.float64),
+            'Frame: ' + str(idx)
+        )
+                
+                
+class MDDataset(InMemoryBaseDataset):
+
+    def process(self, idx, **input_params):
+
+        for top, traj in zip(input_params['top_file'], input_params['traj_file']):
             u = MDAnalysis.Universe(top,  traj)
-            self.process_traj(u, traj, dist_scale, time_scale)
+            for frame, ts in enumerate(ProgressBar(u.trajectory)):
+                z = [get_element(a.element, a.mass) for a in u.atoms]
+
+                self.append(
+                    z=z,
+                    pos=torch.tensor(u.atoms.positions*self.dist_scale, dtype=torch.float64),
+                    vel=torch.tensor(u.atoms.velocities*self.dist_scale/self.time_scale, dtype=torch.float64),
+                    N=len(u.atoms),
+                    label=traj + ' frame: ' + str(frame)
+                )

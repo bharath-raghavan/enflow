@@ -7,6 +7,13 @@ from rdkit import Chem
 from scipy.special import erf
 from scipy.interpolate import interp1d as interp
 
+class NoneTransform:
+    def __init__(self):
+        pass
+
+    def __call__(self, data):
+        return data
+
 class Compose:
     def __init__(self, transforms):
         self.transforms = transforms

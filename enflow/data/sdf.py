@@ -30,7 +30,6 @@ class SDFDataset(BaseDataset):
                 z=z,
                 h=h,
                 pos=pos,
-                vel=torch.zeros_like(pos),
                 N=N,
                 label=label
             )

@@ -2,7 +2,8 @@ import os
 from abc import ABC, abstractmethod
 import numpy as np
 import torch
-from ..utils.helpers import apply_pbc, get_box_len, get_periodic_images, wrap_ids_across_periodic_img, one_hot
+from .transforms import NoneTransform
+from ..utils.helpers import apply_pbc, get_box_len, get_periodic_images_within, one_hot
 from ..utils.constants import atom_types
 
 class Edges: # edge class to handle coord_diff over periodic box
@@ -14,7 +15,7 @@ class Edges: # edge class to handle coord_diff over periodic box
     @property
     def coord_diff(self):
         coord_diff = self.coord[self.row] - self.coord[self.col]
-        coord_diff = coord_diff - (coord_diff>(self.box*0.5))*self.box*0.5 # get nearest periodic image dist
+        coord_diff = apply_pbc(coord_diff, self.box*0.5) # get nearest periodic image dist , old method -> coord_diff = coord_diff - (coord_diff>(self.box*0.5))*self.box*0.5
         return coord_diff
 
 class Data:
@@ -71,6 +72,28 @@ class Data:
             self.i += 1
             return mol
     
+    def clone(self):
+        h = self.h.clone()
+        g = self.g.clone()
+        pos = self.pos.clone()
+        vel = self.vel.clone()
+        N = self.N.clone()
+        r_cut = self.r_cut.clone()
+        box = self.box.clone()
+        
+        return Data(
+                z=self.z,
+                h=h,
+                g=g,
+                pos=pos,
+                vel=vel,
+                N=N,
+                r_cut=r_cut,
+                box=box,
+                label=self.label,
+                device=self.device
+            )
+            
     def to(self, device):
         h = self.h.to(device)
         g = self.g.to(device)
@@ -94,7 +117,7 @@ class Data:
             )
     
     def pbc(self):
-        self.pos = apply_pbc(self.pos, self.box) # element by element operations b/w pos and box
+        self.pos = apply_pbc(self.pos, self.box)
             
     @property
     def edges(self):
@@ -105,13 +128,13 @@ class Data:
         N_cnt = 0
         for mol in self:
             box = mol.box[0] # assume that each atom in mol has same box lens (should be true), so use only first one
-            pos_all_periodic_images = get_periodic_images(mol.pos, box) # replicate positions 27 times
+            pos_all_periodic_images, id_mapping = get_periodic_images_within(mol.pos, box, mol.r_cut) # replicate positions 27 times and find those within r_cut
             
             r_sq = mol.r_cut*mol.r_cut
             
-            dist_sq = (pos_all_periodic_images.unsqueeze(1) - mol.pos).pow(2).sum(dim=2) # calculating diff with all (27) images takes time, TODO: find way to reduce time
+            dist_sq = (pos_all_periodic_images.unsqueeze(1) - mol.pos).pow(2).sum(dim=2) # calculating diff with all (27) images takes time
             ids = (dist_sq < r_sq).nonzero()
-            periodic_ids = wrap_ids_across_periodic_img(ids, mol.num_atoms)
+            periodic_ids = id_mapping[ids]
             edge_index_mol = periodic_ids + N_cnt
             edge_index_mol = edge_index_mol[torch.nonzero(edge_index_mol[:, 0] - edge_index_mol[:, 1])].squeeze(1)
             boxes.append(box.repeat(edge_index_mol.shape[0], 1)) # repeate box size for each edge
@@ -128,7 +151,6 @@ class DataLoader(torch.utils.data.DataLoader):
         shuffle: bool = False,
         **kwargs,
     ):
-
         super().__init__(
             dataset,
             batch_size,
@@ -151,26 +173,83 @@ class DataLoader(torch.utils.data.DataLoader):
                 label=[d.label for d in dataset]
             )
 
-
 class BaseDataset(torch.utils.data.Dataset, ABC):
     def __init__(self, **input_params):
         if 'transform' in input_params:
             self.transform = input_params['transform']
             input_params.pop('transform')
         else:
-            self.transform = None
+            self.transform = NoneTransform()
         
-        if 'box_pad' in input_params:
-            self.box_pad = float(input_params['box_pad'])
-            input_params.pop('box_pad')
+        if 'atom_types' in input_params:
+            self.atom_types = input_params['atom_types']
         else:
-            self.box_pad = 0
+            self.atom_types = None
         
+        if 'box' in input_params:
+            self.box = torch.tensor(input_params['box'])
+        else:
+            self.box = None
+
         if 'r_cut' in input_params:
             self.r_cut = float(input_params['r_cut'])
             input_params.pop('r_cut')
         else:
             self.r_cut = None
+            
+        self.input_params = input_params
+    
+    @abstractmethod   
+    def __len__(self):
+        pass
+
+    def __getitem__(self, idx):
+        z, pos, vel, label = self.process(idx)
+        return self._get_data(z, pos, vel, label)
+        
+    
+    def _get_data(self, z, pos, vel, label):
+        if self.box is None:
+            self.box = get_box_len(pos)
+        
+        if self.r_cut is None:
+            print("error rcut")
+
+        atom_types = {z:i for i,z in enumerate(self.atom_types)}
+        type_idx = [atom_types[i] for i in z]
+        h = one_hot(torch.tensor(type_idx), num_classes=len(atom_types), dtype=torch.float64)
+
+        if vel is None:
+            vel = torch.zeros_like(pos)
+
+        N = pos.shape[0]
+
+        data = Data(
+            z=z,
+            h=h,
+            g=torch.normal(0, 1, size=h.shape, dtype=torch.float64),
+            pos=pos,
+            vel=vel,
+            N=N,
+            r_cut=self.r_cut,
+            box=self.box.repeat(N, 1), # tile box len to be same size as pos
+            label=label
+        )
+    
+        return self.transform(data)
+    
+    @property  
+    def node_nf(self):
+        return len(self.atom_types)
+
+    @abstractmethod
+    def process(self, **input_params):
+        pass
+
+
+class InMemoryBaseDataset(BaseDataset, ABC):
+    def __init__(self, **input_params):
+        super().__init__(**input_params)
             
         self.data_list = []
         
@@ -185,7 +264,7 @@ class BaseDataset(torch.utils.data.Dataset, ABC):
                 torch.save(self.data_list, processed_file)
         else:
             self.process(**input_params)
-    
+
     def __len__(self):
         return len(self.data_list)
 
@@ -200,41 +279,10 @@ class BaseDataset(torch.utils.data.Dataset, ABC):
     def num_atoms_per_mol(self):
         return self.data_list[0].N
     
-    def append(self, z, h, pos, vel, N, label, box=None):
-        if box is None:
-            box=get_box_len(pos)+self.box_pad
-        else:
-            box += self.box_pad
-        
-        if self.r_cut is None:
-            print("error rcut")
-            
-        if h is None:
-            type_idx = [atom_types[i] for i in z]
-            h = one_hot(torch.tensor(type_idx), num_classes=len(atom_types), dtype=torch.float64)
-            
-        data = Data(
-            z=z,
-            h=h,
-            g=torch.normal(0, 1, size=h.shape, dtype=torch.float64),
-            pos=pos,
-            vel=vel,
-            N=N,
-            r_cut=self.r_cut,
-            box=box.repeat(N, 1), # tile box len to be same size as pos
-            label=label
-        )
-        
-        if self.transform:
-            self.data_list.append(self.transform(data))
-        else:
-            self.data_list.append(data)
-        
-    @abstractmethod
-    def process(self, **input_params):
-        pass
+    def append(self, z, pos, vel=None, label=None):
+        self.data_list.append(self._get_data(z, pos, vel, label))
 
-class ComposeDatasets(BaseDataset):
+class ComposeInMemoryDatasets(InMemoryBaseDataset):
     def __init__(self, datasets):
         self.data_list = []
         
