@@ -1,5 +1,6 @@
 import math
 import torch
+from ..utils.helpers import log_gaussian
 
 class Alchemical_NLL:
     def __init__(self, kBT, partition_func=10, softening=0):
@@ -18,7 +19,7 @@ class Alchemical_NLL:
         return H 
 
     def __call__(self, out, ldj):
-        H = self._get_lj_potential(out) + ((out.vel**2).sum() + (out.h**2).sum() + (out.g**2).sum())*0.5
-        logZ = - out.num_atoms*( math.log(self.z_lj) - (1.5+out.h.shape[1])*math.log(2*math.pi*self.kBT) )
-        log_px = - H/self.kBT + logZ + ldj
+        H = self._get_lj_potential(out) + 0.5*(out.vel**2).sum()
+        logZ = - out.num_atoms*( math.log(self.z_lj) - 1.5*math.log(2*math.pi/self.kBT))
+        log_px = - H/self.kBT + logZ + ldj + log_gaussian(out.h) + log_gaussian(out.g)
         return -log_px/out.num_mols 
