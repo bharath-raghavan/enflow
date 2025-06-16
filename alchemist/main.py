@@ -8,6 +8,7 @@ import importlib
 
 import torch
 
+from .config import TrainConfig, GenConfig, NetworkSetup
 from .flow.loss import Alchemical_NLL
 from .nn.egcl import EGCL
 from .data.sdf import SDFDataset
@@ -21,7 +22,7 @@ from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 def eprint(*args, **kwargs):
-    print(*args, file=sys.stderr, **kwargs)
+    print(*args, file=sys.stderr, flush=True, **kwargs)
 
 def write_xyz(out, file):
     with open(file, 'w') as f:
@@ -29,11 +30,10 @@ def write_xyz(out, file):
         for x in out.pos:
             x = x*sigma*1e10
             f.write("%s %.18g %.18g %.18g\n" % ('Ar', x[0].item(), x[1].item(), x[2].item()))
-                
-class Main:
 
+class Parallel:
     def __init__(self, world_size=None, world_rank=None, local_rank=None, num_cpus_per_task=None):
-        if world_size and world_rank and local_rank:
+        if world_size and world_rank and local_rank and num_cpus_per_task:
             self.ddp = True
         else:
             self.ddp = False
@@ -42,237 +42,203 @@ class Main:
             self.world_size = int(world_size)
             self.world_rank = int(world_rank)
             self.local_rank = int(local_rank)
+            self.num_cpus_per_task = int(num_cpus_per_task)
+        else:
+            self.world_size = 1
+            self.world_rank = 0
+            self.local_rank = 'cpu'
+            self.num_cpus_per_task = 4
 
+    def eprint(self, *args, **kwargs):
+        if self.world_rank == 0:
+            eprint(*args, **kwargs)
+
+    def sync(self):
+        if self.ddp: torch.cuda.synchronize()
+
+    def __enter__(self):
+        if self.ddp:
+            torch.cuda.set_device(self.local_rank)
+            device = torch.cuda.current_device()
             os.environ["WORLD_SIZE"] = str(self.world_size)
             os.environ["RANK"] = str(self.world_rank)
             os.environ["LOCAL_RANK"] = str(self.local_rank)
-
             os.environ["NCCL_SOCKET_IFNAME"] = "hsn0"
-            torch.cuda.set_device(self.local_rank)
-            device = torch.cuda.current_device()
-
             dist.init_process_group('nccl', timeout=timedelta(seconds=7200000), init_method="env://", rank=self.world_rank, world_size=self.world_size)
-    
-            self.num_cpus_per_task = int(num_cpus_per_task)
-            
-            if world_rank == 0:
-                eprint(f"Running DDP\nInitialized? {dist.is_initialized()}", flush=True)
+            self.eprint(f"Running DDP.  Initialized = {dist.is_initialized()}")
         else:
-            print("Running serially", flush=True)
-            self.world_rank = 0
-            self.local_rank = 'cpu'
-    
-    def _setup_dataset(self, dataset_label, args):
-        dataset_type = args[dataset_label]['type']
-        dataset_class = getattr(importlib.import_module(f"alchemist.data.{dataset_type}"), f"{dataset_type.upper()}Dataset")
-        dataset_args = {i:args[dataset_label][i] for i in args[dataset_label] if (i!='batch_size' and i!='type')}
-        
-        dataset_args['dist_unit'] = args['units']['dist']
-        dataset_args['time_unit'] = args['units']['time']
-        
-        T = [transforms.ConvertPositionsFrom(args['units']['dist']), transforms.Center()]
+            self.eprint("Running serially")
 
-        if 'randomize_vel' in dataset_args and dataset_args['randomize_vel']:
-                T.append(transforms.RandomizeVelocity(kelvin_to_lj(float(dataset_args['temp']))))
-                dataset_args.pop('temp')
+    def __exit__(self, type, value, traceback):
+        #self.file_obj.close()
+        if self.ddp: dist.destroy_process_group()
+        
+    def setup_sampler(self, dataset, batch_size):
+        if self.ddp:
+            sampler = DistributedSampler(dataset, num_replicas=self.world_size, rank=self.world_rank, shuffle=False)
+            train_loader = DataLoader(dataset, batch_size=batch_size, num_workers=self.num_cpus_per_task, pin_memory=True, shuffle=False, sampler=sampler, drop_last=False)
         else:
-            T.append(transforms.ConvertVelocitiesFrom(args['units']['dist'], args['units']['time']))
+            sampler = None
+            train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
-        return dataset_class(**dataset_args, transform=transforms.Compose(T))
-    
-    def setup(self, input):
+        return sampler, train_loader
+
+    def setup_model(self, model):
+        if self.ddp:
+            return DDP(model, device_ids=[self.local_rank])
+        return model
+
+class Main:
+    def setup(self, args: TrainConfig, checkpoint: Path):
         self.start_epoch = 0
         checkpoint = None
-    
-        with open(input, 'r') as f: args = yaml.load(f, Loader=yaml.FullLoader)
         
         self.mode = 'train'
-        if args['mode'] == 'generate': self.mode = 'gen'
-        elif args['mode'] == 'dataset': self.mode = 'data'
-        elif args['mode'] != 'train': eprint("error")
         
         if 'dynamics' in args and 'checkpoint_path' in args['dynamics']:
              self.checkpoint_path = args['dynamics']['checkpoint_path']
         else:
             self.checkpoint_path = '' 
-        
-        if os.path.exists(self.checkpoint_path):
-            if self.world_rank == 0: print("Loading from saved state", flush=True)
-            checkpoint = torch.load(self.checkpoint_path, weights_only=False)
-            node_nf = checkpoint['node_nf']
-            self.hidden_nf = checkpoint['hidden_nf']
-            n_iter = checkpoint['n_iter']
-            dt = checkpoint['dt']
-            self.integrator = checkpoint['integrator']
-            lj_kBT = checkpoint['lj_kBT']
-            softening = checkpoint['softening']
-        elif self.mode != 'data':
-            self.hidden_nf = int(args['dynamics']['network']['hidden_nf'])
-            n_iter = int(args['dynamics']['n_iter'])
-            dt = time_to_lj(float(args['dynamics']['dt']), unit=args['units']['time'])
-            self.integrator = args['dynamics']['integrator'].lower()
-            lj_kBT = kelvin_to_lj(float(args['training']['loss']['temp']))
-            softening = float(args['training']['loss']['softening'])
-        
-        if self.mode == 'gen':
-            args['dataset']['node_nf'] = node_nf
-            args['dataset']['softening'] = softening
-            args['dataset']['temp'] = lj_to_kelvin(lj_kBT)
-            args['dataset']['box'] = [float(i) for i in args['dataset']['box']]
-            args['dataset']['n_atoms'] = int(args['dataset']['n_atoms'])
-            batch_size = 1
-        elif self.mode == 'train':
-            batch_size = int(args['training']['batch_size'])
-        
-        if args['dataset']['type'] == 'compose':
-            n_dataset = args['dataset']['number']
-            datasets = []
-            for i in range(n_dataset):
-                datasets.append(self._setup_dataset(f'dataset{i+1}', args))
-            from alchemist.data.base import ComposeDatasets
-            self.dataset = ComposeDatasets(datasets)
-        else:
-            self.dataset = self._setup_dataset('dataset', args)
-        
-        if self.mode == 'data':
-            return
-        
-        if self.ddp:
-            self.sampler = DistributedSampler(self.dataset, num_replicas=self.world_size, rank=self.world_rank, shuffle=False)
-            self.train_loader = DataLoader(self.dataset, batch_size=batch_size, num_workers=self.num_cpus_per_task, pin_memory=True, shuffle=False, sampler=self.sampler, drop_last=False)
-        else:
-            self.train_loader = DataLoader(self.dataset, batch_size=batch_size, shuffle=False)
-        
-        if not checkpoint:
-            node_nf = self.dataset.node_nf
-        
-        network=EGCL(node_nf, node_nf, self.hidden_nf)
-        integrator_class = getattr(importlib.import_module(f"alchemist.flow.dynamics"), f"{self.integrator.upper()}Integrator")
-        self.model = integrator_class(network=network, n_iter=n_iter, dt=dt).to(self.local_rank)
-        
-        if checkpoint:
-            self.model.load_state_dict(checkpoint['model_state_dict'])
-            self.start_epoch = checkpoint['epoch']+1
-            
-        if self.ddp: self.model = DDP(self.model, device_ids=[self.local_rank])
-        
-        if self.mode == 'gen':
-            if self.world_rank == 0: eprint("In generate mode", flush=True)
-            return    
-        
-        if self.world_rank == 0: eprint("In training mode", flush=True)
-        
-        if args['training']['scheduler']:
-            scheduler_step = float(args['training']['scheduler_step'])
-            gamma = float(args['training']['gamma'])
-        else:
-            scheduler_step = 0
-            gamma = 0
-        
-        self.log_interval = int(args['training']['log_interval'])
-        self.num_epochs = int(args['training']['num_epochs'])
-        
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=float(args['training']['lr']))
-        self.scheduler = None
+        self.load(checkpoint)
     
-        if args['training']['scheduler']:
-            scheduler_step = float(args['training']['scheduler_step'])
-            gamma = float(args['training']['gamma'])
-        else:
-            scheduler_step = 0
-            gamma = 0
+    def load(self, checkpoint: Path) -> None:
+        if not checkpoint.exists():
+            raise FileNotFoundError(checkpoint)
+
+        if self.world_rank == 0:
+            print("Loading from saved state", flush=True)
+        checkpoint = torch.load(checkpoint, weights_only=False)
+        node_nf = checkpoint['node_nf']
+        self.hidden_nf = checkpoint['hidden_nf']
+        n_iter = checkpoint['n_iter']
+        dt = checkpoint['dt']
+        self.integrator = checkpoint['integrator']
+        lj_kBT = checkpoint['lj_kBT']
+        softening = checkpoint['softening']
+
+    def new_model(self, net: NetworkSetup, loss: LossSetup):
+        self.hidden_nf = net.hidden_nf
+        n_iter = net.n_iter
+        dt = net.dt
+        temp = loss.temp
+        softening = loss.softening
         
-        if scheduler_step != 0 and gamma != 0:
-            self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=scheduler_step, gamma=gamma)
+    def setup_dataset(self, dataset: DatasetSetup, parallel: Parallel):
+        dset = ComposeDataset(dataset.traj_file)
+        sampler, train_loader = parallel.setup_sampler(
+                                        dset, dataset.batch_size)
+        return dset, sampler, train_loader
         
-        self.nll = Alchemical_NLL(kBT=lj_kBT, softening=softening)
+    def setup_model(self, node_nf, checkpoint, parallel: Parallel):
+        #node_nf = self.dataset.node_nf
+        network = EGCL(node_nf, node_nf, self.hidden_nf)
+        integrator_class = getattr(importlib.import_module(f"alchemist.flow.dynamics"), f"{self.integrator.upper()}Integrator")
+        model = integrator_class(network=network, n_iter=n_iter, dt=dt).to(parallel.local_rank)
 
         if checkpoint:
-            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            if self.scheduler: self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            model.load_state_dict(checkpoint['model_state_dict'])
+            self.start_epoch = checkpoint['epoch']+1
+        
+        return parallel.setup_model(model)
 
-    def train(self):
-        if self.world_rank == 0:
-            print('Epoch \tTraining Loss \t   TGPU (s)', flush=True)
+    def train(self, config, checkpoint, parallel):
+        log_interval = config.training.log_interval
+        num_epochs = config.training.num_epochs
 
-        for epoch in range(self.start_epoch, self.start_epoch+self.num_epochs):
+        dataset, sampler, train_loader \
+                    = self.setup_dataset(config.dataset, parallel)
+        model = self.setup_model(dataset.node_nf, checkpoint, parallel)
+        
+        optimizer = torch.optim.Adam(model.parameters(),
+                                     lr=config.training.lr)
+
+        sch = config.training.scheduler
+        if sch.step_size != 0 and sch.gamma > 0:
+            scheduler = torch.optim.lr_scheduler.StepLR(
+                        optimizer,
+                        step_size=sch.step_size,
+                        gamma=sch.gamma)
+        else:
+            scheduler = None
+        
+        nll = Alchemical_NLL(kBT=config.loss.temp*BOLTZMANN, softening=config.loss.softening)
+
+        if checkpoint:
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            if scheduler: scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+
+        parallel.eprint('Epoch \tTraining Loss \t   TGPU (s)')
+
+        for epoch in range(self.start_epoch, self.start_epoch+num_epochs):
             losses = []
 
-            if self.ddp: self.sampler.set_epoch(epoch)
-            self.model.train()
+            if sampler: sampler.set_epoch(epoch)
+            model.train()
     
-            if self.world_rank == 0:
-                eprint(f"###### Starting epoch {epoch} ######", flush=True)
-                if self.ddp: torch.cuda.synchronize()
+            if parallel.world_rank == 0:
+                eprint(f"###### Starting epoch {epoch} ######")
+                if parallel.ddp: torch.cuda.synchronize()
                 start_time = time.time()
             
-            for i, data in enumerate(self.train_loader):
-                if self.world_rank == 0:
-                    eprint(f'*** Batch Number {i} out of {len(self.train_loader)} batches ***', flush=True)
-                    eprint('GPU \tTraining Loss', flush=True)
+            for i, data in enumerate(train_loader):
+                if parallel.world_rank == 0:
+                    eprint(f'*** Batch Number {i} out of {len(train_loader)} batches ***')
+                    eprint('GPU \tTraining Loss')
             
-                data = data.to(self.local_rank)
-                self.optimizer.zero_grad()
-                out, ldj = self.model(data)
-                loss = self.nll(out, ldj)
+                data = data.to(parallel.local_rank)
+                optimizer.zero_grad()
+                out, ldj = model(data)
+                loss = nll(out, ldj)
                 loss.backward()
-                self.optimizer.step()
-                if self.scheduler: self.scheduler.step()
+                optimizer.step()
+                if scheduler: scheduler.step()
                 losses.append(loss.item())
         
-                eprint('%.5i \t    %.2f' % (self.world_rank, loss.item()), flush=True)
+                eprint('%.5i \t    %.2f' % (parallel.world_rank, loss.item()))
 
             epoch_loss = np.mean(losses)
     
-            if self.world_rank == 0:
+            if parallel.world_rank == 0:
                 to_save = {
                        'epoch': epoch,
-                       'model_state_dict': self.model.module.state_dict(),
-                       'optimizer_state_dict': self.optimizer.state_dict(),
-                       'node_nf': self.dataset.node_nf,
-                       'hidden_nf': self.hidden_nf,
-                       'softening': self.nll.softening,
-                       'lj_kBT': self.nll.kBT,
-                       'integrator': self.integrator,
-                       'n_iter': self.model.module.n_iter,
-                       'dt': self.model.module.dt
+                       'model_state_dict': model.module.state_dict(),
+                       'optimizer_state_dict': optimizer.state_dict(),
+                       'node_nf': dataset.node_nf,
+                       'hidden_nf': dataset.hidden_nf,
+                       'softening': nll.softening,
+                       'lj_kBT': nll.kBT,
+                       'integrator': integrator,
+                       'n_iter': model.module.n_iter,
+                       'dt': model.module.dt
                    }
-                if self.scheduler: to_save['scheduler_state_dict'] = self.scheduler.state_dict()
+                if scheduler: to_save['scheduler_state_dict'] = scheduler.state_dict()
                 
-                torch.save(to_save, self.checkpoint_path)
-
-                eprint("State saved", flush=True)
+                torch.save(to_save, checkpoint_path)
+                parallel.eprint("State saved")
+                parallel.eprint(f"###### Ending epoch {epoch} ###### ")
         
-                eprint(f"###### Ending epoch {epoch} ###### ")
-        
-                if self.ddp: torch.cuda.synchronize()
+                parallel.sync()
                 end_time = time.time()
                 if epoch % self.log_interval == 0: print('%.5i \t    %.2f \t    %.2f' % (epoch, epoch_loss, end_time - start_time), flush=True)
     
             if self.ddp: dist.barrier()
     
-    def generate(self):
+    def generate(self, parallel):
+        # FIXME: use separate main() function for gen vs. train.
+        # One class should hold the model and be able to do both.
+        args['dataset']['node_nf'] = node_nf
+        args['dataset']['softening'] = softening
+        args['dataset']['temp'] = lj_to_kelvin(lj_kBT)
+        args['dataset']['box'] = [float(i) for i in args['dataset']['box']]
+        args['dataset']['n_atoms'] = int(args['dataset']['n_atoms'])
+        batch_size = 1
         
         for i, data in enumerate(self.train_loader): 
             if i==0:
                 break
         
-        out = self.model.reverse(data)
-
+        out = model.reverse(data)
         np.savetxt('h.out', out.h.detach().numpy(), delimiter=' ')
-
         write_xyz(out, 'test_out.xyz')
-
         data_, _ = self.model(out)
-
-        print(torch.allclose(data_.pos, data.pos, atol=1e-8))
-       
-    def __call__(self, input):
-        self.setup(input)
-        
-        if self.mode == 'train':
-            self.train()
-        elif self.mode == 'gen':
-            self.generate()
-        
-        if self.ddp: dist.destroy_process_group()
+        eprint(torch.allclose(data_.pos, data.pos, atol=1e-8))
