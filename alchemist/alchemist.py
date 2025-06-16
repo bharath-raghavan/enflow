@@ -3,38 +3,63 @@ from collections.abc import AsyncIterator
 from typing import Optional, List, Union, Dict
 from typing_extensions import Annotated
 
+import asyncio
+import os
 import logging
 _logger = logging.getLogger(__name__)
-import asyncio
 
 import numpy as np
 import typer
 app = typer.Typer()
 
-from .config import load_dict, DynamicConfig
+from .config import load_dict, DynamicConfig, TrainConfig, GenConfig
 from .data.lj import LJDataset
 from .dynamic import simulate_system
 from .asedb import to_ase, add_mols
+from .main import Main, Parallel
 
 Model = Annotated[Path,
                 typer.Argument(help="NN Parameters for generation.")]
 
 @app.command()
-def train(model: Model,
-          config: Annotated[Path, typer.Argument(help="Training parameter yaml file.")]):
+def train(config: Annotated[Path, typer.Argument(help="Training parameter yaml file.")],
+          model: Model
+         ):
     """ Train (or continue training of) a neural network
         flow model for generating structures.
     """
-    pass
+
+    trainConfig = TrainConfig.model_validate(load_dict(config))
+    with Parallel(world_size=os.environ.get("SLURM_NTASKS", None),
+                  world_rank=os.environ.get("SLURM_PROCID", None),
+                  local_rank=os.environ.get("SLURM_LOCALID", None),
+                  num_cpus_per_task=os.environ.get("SLURM_CPUS_PER_TASK", None)) \
+            as ann:
+        ann.train(trainConfig, model)
 
 @app.command()
-def generate(model: Model,
-             n: Annotated[int, typer.Argument(help="Number of atoms per structure.")],
-             s: Annotated[int, typer.Argument(help="Number of structures to generate.")],
-             rho: Annotated[float, typer.Argument(help="Atomic density.")]):
+def generate(config: GenConfig,
+             model: Model,
+             db: Annotated[Path, typer.Argument(help="Input structures for generator.")],
+             out: Annotated[Path, typer.Argument(help="ASE DB to store results.")],
+             s: Annotated[int, typer.Option(help="Number of structures to generate.")] = 0):
     """ Use a trained model to generate structures.
     """
-    pass
+    # FIXME: this is basically pseudocode, since the functions aren't
+    # setup correctly yet.
+    genConfig = GenConfig.model_validate(load_dict(config))
+    with Parallel(world_size=os.environ.get("SLURM_NTASKS", None),
+                  world_rank=os.environ.get("SLURM_PROCID", None),
+                  local_rank=os.environ.get("SLURM_LOCALID", None),
+                  num_cpus_per_task=os.environ.get("SLURM_CPUS_PER_TASK", None)) \
+            as ann:
+        i = 0
+        for row in db:
+            i += 1
+            if s > 0 and i > s:
+                break
+            y = ann.generate(genConfig, model, row.atoms())
+            out.add(y)
 
 @app.command()
 def dynamics(config: Annotated[Path, typer.Argument(help="DynamicConfig parameters.")],

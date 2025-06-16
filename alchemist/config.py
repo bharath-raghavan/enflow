@@ -9,30 +9,12 @@ class Units(BaseModel):
     time: str
     dist: str
 
-class TrajectoryData(BaseModel):
+class DatasetSetup(BaseModel):
     batch_size: int = 100
-    top_file: List[str]
+    #top_file: List[str]
     traj_file: List[str]
-    processed_file: str
-    units: Units
-
-class NetworkSetup(BaseModel):
-    hidden_nf: int
-
-"""
-class DynamicSetup(BaseModel):
-    cls: str = "LJDataset"
-    r_cut: float
-    report_interval: int = 10
-    report_from: int = 100
-    temp: float = 300
-    traj_file: str
-    dt: float
-    integrator: str
-    n_iter: int
-    #box_pad: float = 1
-    #network: NetworkSetup
-"""
+    #processed_file: str
+    #units: Units
 
 class DynamicConfig(BaseModel):
     nparticles: int = 216
@@ -45,21 +27,43 @@ class DynamicConfig(BaseModel):
     sigma: float = 3.4 # angstrom
     pressure: Optional[float] = None # bar | None
 
-class LossSetup(BaseModel):
-    temp: float = 298.15
-    softening: float
+class SchedulerSetup(BaseModel):
+    step_size: int = 0
+    gamma: float = 0
 
 class TrainingSetup(BaseModel):
     num_epochs: int
     lr: float
-    scheduler: bool
-    loss: LossSetup
     log_interval: int
+    scheduler: SchedulerSetup = SchedulerSetup()
 
-#class ConfigFile(BaseModel):
-#    dynamics: DynamicSetup
-#    training: TrainingSetup
-#    dataset: TrajectoryData
+class NetworkSetup(BaseModel):
+    """ Configuration Options for the NN flow model,
+        including its energy function.
+    """
+    hidden_nf: int # number of hidden dimensions
+    r_cut: float # distance cutoff for NN interactions
+    n_iter: int # Number of iterations of the flow
+    dt: float # timestep for integrator
+
+    #report_interval: int = 10
+    #report_from: int = 100
+    #traj_file: str
+    #integrator: str
+    #box_pad: float = 1
+
+class LossSetup(BaseModel):
+    temp: float = 298.15
+    softening: float
+
+class TrainConfig(BaseModel):
+    training: TrainingSetup
+    network:  NetworkSetup
+    loss:     LossSetup
+    dataset:  DatasetSetup
+
+class GenConfig(BaseModel):
+    network: NetworkSetup
 
 def load_dict(fname: Path) -> dict:
     """ Read a dict from a yaml or json-formatted file.
