@@ -86,7 +86,7 @@ class Main:
 
         return dataset_class(**dataset_args, transform=transforms.Compose(T))
             
-    def setup(self)
+    def setup_dataset(self):
         dataset_params = self.config_file.dataset.params
             
         if self.config_file.dataset.type == 'compose':
@@ -101,10 +101,11 @@ class Main:
             
         if self.ddp:
             self.sampler = DistributedSampler(self.dataset, num_replicas=self.world_size, rank=self.world_rank, shuffle=False)
-            self.train_loader = DataLoader(self.dataset, batch_size=self.config_file.training.batch_size, num_workers=self.num_cpus_per_task, pin_memory=True, shuffle=False, sampler=self.sampler, drop_last=False)
+            self.train_loader = DataLoader(self.dataset, batch_size=self.config_file.dataset.batch_size, num_workers=self.num_cpus_per_task, pin_memory=True, shuffle=False, sampler=self.sampler, drop_last=False)
         else:
-            self.train_loader = DataLoader(self.dataset, batch_size=self.config_file.training.batch_size, shuffle=False)
-    
+            self.train_loader = DataLoader(self.dataset, batch_size=self.config_file.dataset.batch_size, shuffle=False)
+        
+    def setup_model(self):
         self.start_epoch = 0
         network=EGCL(self.node_nf, self.node_nf, self.config.flow.network.hidden_nf)
         integrator_class = getattr(importlib.import_module("alchemist.flow.dynamics"), f"{self.integrator.upper()}Integrator")
@@ -118,6 +119,7 @@ class Main:
         
         if self.ddp: self.model = DDP(self.model, device_ids=[self.local_rank])
     
+    def setup_optim(self):
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=float(self.config.training.lr))
     
         if self.config.training.scheduler_type:
@@ -131,7 +133,11 @@ class Main:
         if checkpoint:
             self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             if self.scheduler: self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-
+    
+    def setup(self):
+        self.setup_dataset()
+        self.setup_model()
+    
     def train(self):
         if self.world_rank == 0:
             print('Epoch \tTraining Loss \t   TGPU (s)', flush=True)
