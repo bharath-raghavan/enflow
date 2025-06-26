@@ -18,7 +18,7 @@ from .config import load_dict, DynamicConfig, TrainConfig
 from .data.lj import LJDataset
 from .dynamic import simulate_system
 from .asedb import to_ase, add_mols, iter_mols
-from .main import Parallel, GenNN
+from .gen_nn import Parallel, GenNN
 
 # raw async stream.py methods
 async def take(s, n, progress=False):

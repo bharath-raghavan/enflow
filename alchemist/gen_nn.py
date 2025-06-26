@@ -13,8 +13,9 @@ from .config import TrainConfig, SchedulerSetup, NetworkSetup, TrainingSetup, Da
 from .flow.loss import Alchemical_NLL
 from .flow.dynamics import LFIntegrator
 from .nn.egcl import EGCL
+from .nn.argmax import ArgMax
 from .data.sdf import SDFDataset
-from .data.base import DataLoader
+from .data.base import DataLoader, ComposeInMemoryDatasets
 from .data import transforms
 from .utils.conversion import dist_to_lj, kelvin_to_lj, time_to_lj, lj_to_dist, lj_to_kelvin
 from .utils.constants import sigma
@@ -133,7 +134,7 @@ class GenNN:
         return nn
 
     def setup_dataset(self, dataset: DatasetSetup):
-        dset = ComposeDataset(dataset.traj_file)
+        dset = ComposeInMemoryDatasets(dataset.traj_file)
         sampler, train_loader = self.parallel.setup_sampler(
                                         dset, dataset.batch_size)
         return dset, sampler, train_loader
@@ -229,7 +230,10 @@ class GenNN:
 def new_model(net: NetworkSetup, parallel: Parallel) -> EGCL:
     network = EGCL(net.node_nf, net.node_nf, net.hidden_nf)
     #integrator_class = getattr(importlib.import_module(f"alchemist.flow.dynamics"), f"{self.integrator.upper()}Integrator")
-    model = LFIntegrator(network=network, n_iter=net.n_iter, dt=net.dt).to(parallel.local_rank)
+    networks = [network]*net.n_iter
+
+    dequant = ArgMax(net.node_nf, net.hidden_nf)
+    model = LFIntegrator(networks, dequant, net.dt).to(parallel.local_rank)
 
     return parallel.setup_model(model)
 
