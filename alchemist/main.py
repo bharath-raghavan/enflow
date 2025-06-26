@@ -3,13 +3,15 @@ import sys
 import yaml
 import numpy as np
 from datetime import timedelta
+from pathlib import Path
 import time
 import importlib
 
 import torch
 
-from .config import TrainConfig, GenConfig, NetworkSetup
+from .config import TrainConfig, SchedulerSetup, NetworkSetup, TrainingSetup, DatasetSetup
 from .flow.loss import Alchemical_NLL
+from .flow.dynamics import LFIntegrator
 from .nn.egcl import EGCL
 from .data.sdf import SDFDataset
 from .data.base import DataLoader
@@ -55,6 +57,8 @@ class Parallel:
 
     def sync(self):
         if self.ddp: torch.cuda.synchronize()
+    def barrier(self):
+        if self.ddp: dist.barrier()
 
     def __enter__(self):
         if self.ddp:
@@ -68,6 +72,8 @@ class Parallel:
             self.eprint(f"Running DDP.  Initialized = {dist.is_initialized()}")
         else:
             self.eprint("Running serially")
+
+        return self
 
     def __exit__(self, type, value, traceback):
         #self.file_obj.close()
@@ -88,157 +94,142 @@ class Parallel:
             return DDP(model, device_ids=[self.local_rank])
         return model
 
-class Main:
-    def setup(self, args: TrainConfig, checkpoint: Path):
-        self.start_epoch = 0
-        checkpoint = None
-        
-        self.mode = 'train'
-        
-        if 'dynamics' in args and 'checkpoint_path' in args['dynamics']:
-             self.checkpoint_path = args['dynamics']['checkpoint_path']
+class GenNN:
+    def __init__(self,
+                 parallel: Parallel,
+                 config: TrainConfig,
+                 model = None,
+                 epoch: int = 0,
+                 ) -> None:
+        self.parallel = parallel
+        self.config = config
+        self.epoch = epoch
+        if model is None:
+            self.model = new_model(config.network, parallel)
         else:
-            self.checkpoint_path = '' 
-        self.load(checkpoint)
+            self.model = model
+        self.scheduler = None
+        self.optimizer = None
     
-    def load(self, checkpoint: Path) -> None:
-        if not checkpoint.exists():
-            raise FileNotFoundError(checkpoint)
+    @classmethod
+    def load(cls, checkpoint_path: Path, parallel: Parallel):
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(checkpoint_path)
 
-        if self.world_rank == 0:
-            print("Loading from saved state", flush=True)
-        checkpoint = torch.load(checkpoint, weights_only=False)
-        node_nf = checkpoint['node_nf']
-        self.hidden_nf = checkpoint['hidden_nf']
-        n_iter = checkpoint['n_iter']
-        dt = checkpoint['dt']
-        self.integrator = checkpoint['integrator']
-        lj_kBT = checkpoint['lj_kBT']
-        softening = checkpoint['softening']
+        parallel.eprint("Loading from saved state")
+        checkpoint = torch.load(checkpoint_path, weights_only=False)
+        config = TrainConfig.model_validate(**checkpoint['config'])
+        epoch = checkpoint['epoch']
 
-    def new_model(self, net: NetworkSetup, loss: LossSetup):
-        self.hidden_nf = net.hidden_nf
-        n_iter = net.n_iter
-        dt = net.dt
-        temp = loss.temp
-        softening = loss.softening
-        
-    def setup_dataset(self, dataset: DatasetSetup, parallel: Parallel):
+        model = new_model(config.network, parallel)
+        model.load_state_dict(checkpoint['model_state_dict'])
+
+        nn = cls(parallel, config, model, epoch)
+        nn.init_optimizer(config)
+        nn.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        nn.init_scheduler(config.scheduler)
+        if nn.scheduler:
+            nn.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        return nn
+
+    def setup_dataset(self, dataset: DatasetSetup):
         dset = ComposeDataset(dataset.traj_file)
-        sampler, train_loader = parallel.setup_sampler(
+        sampler, train_loader = self.parallel.setup_sampler(
                                         dset, dataset.batch_size)
         return dset, sampler, train_loader
         
-    def setup_model(self, node_nf, checkpoint, parallel: Parallel):
-        #node_nf = self.dataset.node_nf
-        network = EGCL(node_nf, node_nf, self.hidden_nf)
-        integrator_class = getattr(importlib.import_module(f"alchemist.flow.dynamics"), f"{self.integrator.upper()}Integrator")
-        model = integrator_class(network=network, n_iter=n_iter, dt=dt).to(parallel.local_rank)
+    def init_optimizer(self, training: TrainingSetup):
+        self.optimizer = torch.optim.Adam(self.model.parameters(),
+                                     lr=training.lr)
 
-        if checkpoint:
-            model.load_state_dict(checkpoint['model_state_dict'])
-            self.start_epoch = checkpoint['epoch']+1
-        
-        return parallel.setup_model(model)
-
-    def train(self, config, checkpoint, parallel):
-        log_interval = config.training.log_interval
-        num_epochs = config.training.num_epochs
-
-        dataset, sampler, train_loader \
-                    = self.setup_dataset(config.dataset, parallel)
-        model = self.setup_model(dataset.node_nf, checkpoint, parallel)
-        
-        optimizer = torch.optim.Adam(model.parameters(),
-                                     lr=config.training.lr)
-
-        sch = config.training.scheduler
+    def init_scheduler(self, sch: SchedulerSetup):
         if sch.step_size != 0 and sch.gamma > 0:
-            scheduler = torch.optim.lr_scheduler.StepLR(
+            self.scheduler = torch.optim.lr_scheduler.StepLR(
                         optimizer,
                         step_size=sch.step_size,
                         gamma=sch.gamma)
-        else:
-            scheduler = None
-        
-        nll = Alchemical_NLL(kBT=config.loss.temp*BOLTZMANN, softening=config.loss.softening)
 
-        if checkpoint:
-            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            if scheduler: scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+    def train(self, dataset: DatasetSetup, training: TrainingSetup,
+              checkpoint_path: Path):
+        log_interval = training.log_interval
+        num_epochs = training.num_epochs
+
+        parallel = self.parallel
+        dataset, sampler, train_loader = self.setup_dataset(dataset)
+        if self.optimizer is None:
+            self.init_optimizer(training)
+        if self.scheduler is None:
+            self.init_scheduler(training.scheduler)
+        
+        nll = Alchemical_NLL(kBT=loss.temp*BOLTZMANN, softening=loss.softening)
 
         parallel.eprint('Epoch \tTraining Loss \t   TGPU (s)')
 
-        for epoch in range(self.start_epoch, self.start_epoch+num_epochs):
+        while self.epoch < train.num_epochs:
+            self.epoch += 1
             losses = []
 
-            if sampler: sampler.set_epoch(epoch)
-            model.train()
+            if sampler: sampler.set_epoch(self.epoch)
+            self.model.train()
     
             if parallel.world_rank == 0:
-                eprint(f"###### Starting epoch {epoch} ######")
-                if parallel.ddp: torch.cuda.synchronize()
+                parallel.eprint(f"###### Starting epoch {self.epoch} ######")
+                parallel.synchronize()
                 start_time = time.time()
             
             for i, data in enumerate(train_loader):
-                if parallel.world_rank == 0:
-                    eprint(f'*** Batch Number {i} out of {len(train_loader)} batches ***')
-                    eprint('GPU \tTraining Loss')
+                parallel.eprint(f'*** Batch Number {i} out of {len(train_loader)} batches ***\nGPU \tTraining Loss')
             
                 data = data.to(parallel.local_rank)
-                optimizer.zero_grad()
-                out, ldj = model(data)
+                self.optimizer.zero_grad()
+                out, ldj = self.model(data)
                 loss = nll(out, ldj)
                 loss.backward()
-                optimizer.step()
-                if scheduler: scheduler.step()
+                self.optimizer.step()
+                if self.scheduler: self.scheduler.step()
                 losses.append(loss.item())
         
-                eprint('%.5i \t    %.2f' % (parallel.world_rank, loss.item()))
+                parallel.eprint('%.5i \t    %.2f' % (parallel.world_rank, loss.item()))
 
             epoch_loss = np.mean(losses)
-    
+
             if parallel.world_rank == 0:
-                to_save = {
-                       'epoch': epoch,
-                       'model_state_dict': model.module.state_dict(),
-                       'optimizer_state_dict': optimizer.state_dict(),
-                       'node_nf': dataset.node_nf,
-                       'hidden_nf': dataset.hidden_nf,
-                       'softening': nll.softening,
-                       'lj_kBT': nll.kBT,
-                       'integrator': integrator,
-                       'n_iter': model.module.n_iter,
-                       'dt': model.module.dt
-                   }
-                if scheduler: to_save['scheduler_state_dict'] = scheduler.state_dict()
-                
-                torch.save(to_save, checkpoint_path)
-                parallel.eprint("State saved")
-                parallel.eprint(f"###### Ending epoch {epoch} ###### ")
-        
                 parallel.sync()
                 end_time = time.time()
                 if epoch % self.log_interval == 0: print('%.5i \t    %.2f \t    %.2f' % (epoch, epoch_loss, end_time - start_time), flush=True)
+                self.save(checkpoint_path)
     
-            if self.ddp: dist.barrier()
+            parallel.barrier()
     
-    def generate(self, parallel):
-        # FIXME: use separate main() function for gen vs. train.
-        # One class should hold the model and be able to do both.
-        args['dataset']['node_nf'] = node_nf
-        args['dataset']['softening'] = softening
-        args['dataset']['temp'] = lj_to_kelvin(lj_kBT)
-        args['dataset']['box'] = [float(i) for i in args['dataset']['box']]
-        args['dataset']['n_atoms'] = int(args['dataset']['n_atoms'])
-        batch_size = 1
-        
-        for i, data in enumerate(self.train_loader): 
-            if i==0:
-                break
-        
-        out = model.reverse(data)
-        np.savetxt('h.out', out.h.detach().numpy(), delimiter=' ')
-        write_xyz(out, 'test_out.xyz')
-        data_, _ = self.model(out)
-        eprint(torch.allclose(data_.pos, data.pos, atol=1e-8))
+    def save(self, checkpoint_path: Path):
+        if self.parallel.world_rank != 0:
+            return
+        eprint("State saved")
+        eprint(f"###### Ending epoch {epoch} ###### ")
+        to_save = {
+            'epoch': epoch,
+            'model_state_dict': self.model.module.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'config': self.config.model_dump(),
+        }
+        if self.scheduler:
+            to_save['scheduler_state_dict'] = scheduler.state_dict()
+        torch.save(to_save, checkpoint_path)
+    
+    def generate(self, data):
+        parallel = self.parallel
+        data = data.to(parallel.local_rank)
+        out = self.model.reverse(data)
+        yield out
+        #np.savetxt('h.out', out.h.detach().numpy(), delimiter=' ')
+        #write_xyz(out, 'test_out.xyz')
+        #data_, _ = self.model(out)
+        #eprint(torch.allclose(data_.pos, data.pos, atol=1e-8))
+
+def new_model(net: NetworkSetup, parallel: Parallel) -> EGCL:
+    network = EGCL(net.node_nf, net.node_nf, net.hidden_nf)
+    #integrator_class = getattr(importlib.import_module(f"alchemist.flow.dynamics"), f"{self.integrator.upper()}Integrator")
+    model = LFIntegrator(network=network, n_iter=net.n_iter, dt=net.dt).to(parallel.local_rank)
+
+    return parallel.setup_model(model)
+

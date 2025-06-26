@@ -32,6 +32,15 @@ def to_ase(names:  List[str],
     #data = { 'dipoles': dipoles, 'ratios': ratios }
     return atoms
 
+async def iter_mols(fname) -> AsyncIterator[Atoms]:
+    """ Iterate through an ASE DB.
+
+        Yields: Atoms
+    """
+    with connect(fname) as db:
+        for row in db.select():
+            yield row.toatoms()
+
 async def add_mols(molecules: AsyncIterator[Atoms], fname) -> AsyncIterator[int]:
     """ Add a list of molecules to the ASE database.
 
