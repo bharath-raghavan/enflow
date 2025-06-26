@@ -8,22 +8,47 @@ import os
 import logging
 _logger = logging.getLogger(__name__)
 
+from tqdm import tqdm
+from tqdm.asyncio import tqdm as atqdm
 import numpy as np
 import typer
 app = typer.Typer()
 
-from .config import load_dict, DynamicConfig, TrainConfig, GenConfig
+from .config import load_dict, DynamicConfig, TrainConfig
 from .data.lj import LJDataset
 from .dynamic import simulate_system
-from .asedb import to_ase, add_mols
-from .main import Main, Parallel
+from .asedb import to_ase, add_mols, iter_mols
+from .main import Parallel, GenNN
 
-Model = Annotated[Path,
-                typer.Argument(help="NN Parameters for generation.")]
+# raw async stream.py methods
+async def take(s, n, progress=False):
+    i = 0
+    if progress:
+        p = tqdm(total=n)
+    async for x in s:
+        if i >= n:
+            break
+        yield x
+        i += 1
+        if progress:
+            p.update(1)
+
+async def to_async(g):
+    for x in g:
+        yield x
+
+async def consume(stream):
+    async for i in stream:
+        pass
+
+async def apply(it, fn):
+    async for z in it:
+        yield fn(*z)
 
 @app.command()
-def train(config: Annotated[Path, typer.Argument(help="Training parameter yaml file.")],
-          model: Model
+def train(config: Annotated[Path, typer.Argument(help="TrainConfig yaml file.")],
+          inp:    Annotated[Optional[Path], typer.Option(help="Starting model checkpoint path")] = None,
+          out:    Annotated[Path, typer.Option(help="Output checkpoint path")] = "model.pth",
          ):
     """ Train (or continue training of) a neural network
         flow model for generating structures.
@@ -34,32 +59,40 @@ def train(config: Annotated[Path, typer.Argument(help="Training parameter yaml f
                   world_rank=os.environ.get("SLURM_PROCID", None),
                   local_rank=os.environ.get("SLURM_LOCALID", None),
                   num_cpus_per_task=os.environ.get("SLURM_CPUS_PER_TASK", None)) \
-            as ann:
-        ann.train(trainConfig, model)
+            as parallel:
+        if inp is not None:
+            ann = GenNN.load(inp, parallel)
+        else:
+            ann = GenNN(parallel, trainConfig)
+        ann.train(trainConfig.dataset, trainConfig.training, out)
 
 @app.command()
-def generate(config: GenConfig,
-             model: Model,
+def generate(inp: Annotated[Path, typer.Argument(help="Model checkpoint path")],
              db: Annotated[Path, typer.Argument(help="Input structures for generator.")],
              out: Annotated[Path, typer.Argument(help="ASE DB to store results.")],
              s: Annotated[int, typer.Option(help="Number of structures to generate.")] = 0):
     """ Use a trained model to generate structures.
     """
-    # FIXME: this is basically pseudocode, since the functions aren't
-    # setup correctly yet.
-    genConfig = GenConfig.model_validate(load_dict(config))
     with Parallel(world_size=os.environ.get("SLURM_NTASKS", None),
                   world_rank=os.environ.get("SLURM_PROCID", None),
                   local_rank=os.environ.get("SLURM_LOCALID", None),
                   num_cpus_per_task=os.environ.get("SLURM_CPUS_PER_TASK", None)) \
-            as ann:
-        i = 0
-        for row in db:
-            i += 1
-            if s > 0 and i > s:
-                break
-            y = ann.generate(genConfig, model, row.atoms())
-            out.add(y)
+            as parallel:
+        assert parallel.world_size == 1, "Need multiple dbs for parallel operation."
+
+        ann = GenNN.load(inp, parallel)
+
+        g = apply(iter_mols(db), ann.generate)
+        if s > 0:
+            g = take(g, s, True)
+        else:
+            g = atqdm(g)
+
+        asyncio.run(
+            consume(
+                add_mols(g, out)
+            )
+        )
 
 @app.command()
 def dynamics(config: Annotated[Path, typer.Argument(help="DynamicConfig parameters.")],
@@ -82,21 +115,14 @@ def dynamics(config: Annotated[Path, typer.Argument(help="DynamicConfig paramete
     def get_ase(x, e):
         return to_ase(names, x, cell, energy=e)
 
-    async def map_fn(it, fn):
-        i = 0
-        for z in it:
-            yield fn(*z)
-            i += 1
-            if i >= s:
-                break
-
-    def c2(inp, out, *args):
-        return out(inp, *args)
-
-    async def consume(stream):
-        async for i in stream:
-            pass
-
     asyncio.run(
-            consume( add_mols(map_fn(simulate_system(config), get_ase), out) )
+            consume(
+                take(
+                    add_mols(
+                        apply(
+                            to_async(simulate_system(config)),
+                            get_ase),
+                        out),
+                s, True)
+            )
         )

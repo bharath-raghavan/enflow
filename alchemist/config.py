@@ -45,6 +45,7 @@ class NetworkSetup(BaseModel):
     r_cut: float # distance cutoff for NN interactions
     n_iter: int # Number of iterations of the flow
     dt: float # timestep for integrator
+    node_nf: int # number of features per node
 
     #report_interval: int = 10
     #report_from: int = 100
@@ -61,9 +62,6 @@ class TrainConfig(BaseModel):
     network:  NetworkSetup
     loss:     LossSetup
     dataset:  DatasetSetup
-
-class GenConfig(BaseModel):
-    network: NetworkSetup
 
 def load_dict(fname: Path) -> dict:
     """ Read a dict from a yaml or json-formatted file.
